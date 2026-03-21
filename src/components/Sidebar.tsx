@@ -19,7 +19,11 @@ import {
   Cpu,
   ChevronLeft,
   ChevronRight,
-  Sparkles
+  Sparkles,
+  Mail,
+  FileText,
+  Layout, // Added Layout icon
+  UserCheck // Added UserCheck icon
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -48,6 +52,13 @@ const navItems = [
 const systemItems = [
   { id: 'automation-flow', label: 'Automation Flow', icon: Zap },
   { id: 'risk', label: 'Risk Control', icon: Shield },
+  { id: 'templates', label: 'Email Templates', icon: Mail },
+  { id: 'proposals', label: 'Proposals', icon: FileText },
+  { id: 'conversion', label: 'Conversion', icon: Zap },
+  { id: 'forms', label: 'Lead Forms', icon: Layout },
+  { id: 'leads', label: 'Lead Management', icon: UserCheck },
+  { id: 'followups', label: 'Follow-ups', icon: Repeat },
+  { id: 'sequences', label: 'Sequence Builder', icon: Mail },
   { id: 'phases', label: 'Phases', icon: Rocket },
   { id: 'revenue', label: 'Revenue Engine', icon: TrendingUp },
   { id: 'automation-levels', label: 'Auto Levels', icon: Cpu },

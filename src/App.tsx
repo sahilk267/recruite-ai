@@ -9,7 +9,7 @@ import { JobIntelligence } from './sections/JobIntelligence';
 import { AIProcessing } from './sections/AIProcessing';
 import { LeadCapture } from './sections/LeadCapture';
 import { LeadScoring } from './sections/LeadScoring';
-import { RecruiterAcquisition } from './sections/RecruiterAcquisition';
+import { RecruiterManagement } from './sections/RecruiterManagement';
 import { FollowUpEngine } from './sections/FollowUpEngine';
 import { DealAutomation } from './sections/DealAutomation';
 import { LeadDistribution } from './sections/LeadDistribution';
@@ -18,10 +18,17 @@ import { CRMDashboard } from './sections/CRMDashboard';
 import { AutomationFlow } from './sections/AutomationFlow';
 import { RiskControl } from './sections/RiskControl';
 import { PhaseExecution } from './sections/PhaseExecution';
-import { RevenueEngine } from './sections/RevenueEngine';
 import { AutomationTable } from './sections/AutomationTable';
+import { EmailTemplates } from './sections/EmailTemplates';
+import { ProposalSystem } from './sections/ProposalSystem';
+import { ConversionDashboard } from './sections/ConversionDashboard';
+import { RevenueDashboard } from './sections/RevenueDashboard';
+import { LeadForms } from './sections/LeadForms';
+import { LeadManagement } from './sections/LeadManagement';
+import FollowUpManagement from './sections/FollowUpManagement';
+import SequenceBuilder from './sections/SequenceBuilder';
 
-type Section = 
+type Section =
   | 'dashboard'
   | 'traffic'
   | 'jobs'
@@ -38,7 +45,14 @@ type Section =
   | 'risk'
   | 'phases'
   | 'revenue'
-  | 'automation-levels';
+  | 'automation-levels'
+  | 'templates'
+  | 'proposals'
+  | 'conversion'
+  | 'forms'
+  | 'leads'
+  | 'followups'
+  | 'sequences';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -77,7 +91,7 @@ function App() {
       case 'leads-scoring':
         return <LeadScoring />;
       case 'recruiters':
-        return <RecruiterAcquisition />;
+        return <RecruiterManagement />;
       case 'followup':
         return <FollowUpEngine />;
       case 'deals':
@@ -95,9 +109,23 @@ function App() {
       case 'phases':
         return <PhaseExecution />;
       case 'revenue':
-        return <RevenueEngine />;
+        return <RevenueDashboard />;
       case 'automation-levels':
         return <AutomationTable />;
+      case 'templates':
+        return <EmailTemplates />;
+      case 'proposals':
+        return <ProposalSystem />;
+      case 'conversion':
+        return <ConversionDashboard />;
+      case 'forms':
+        return <LeadForms />;
+      case 'leads':
+        return <LeadManagement />;
+      case 'followups':
+        return <FollowUpManagement />;
+      case 'sequences':
+        return <SequenceBuilder />;
       default:
         return <DashboardOverview />;
     }
@@ -121,7 +149,14 @@ function App() {
       risk: 'Risk Control System',
       phases: 'Phase Execution',
       revenue: 'Revenue Engine',
-      'automation-levels': 'Automation Levels'
+      'automation-levels': 'Automation Levels',
+      templates: 'Email Templates',
+      proposals: 'Proposal System',
+      conversion: 'Conversion Dashboard',
+      forms: 'Lead Capture Forms',
+      leads: 'Lead Management',
+      followups: 'Follow-up Management',
+      sequences: 'Sequence Builder'
     };
     return titles[activeSection] || 'Dashboard';
   };

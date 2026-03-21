@@ -1,5 +1,5 @@
 import apiClient from './api';
-import { Job, Lead, Recruiter, Deal, Payment } from '@/types';
+import type { Job, Lead, Recruiter, Deal, Payment, EmailTemplate, Proposal } from '@/types';
 
 // ============ JOB SERVICE ============
 export const jobService = {
@@ -92,6 +92,39 @@ export const recruiterService = {
 
   deleteRecruiter: async (id: string) => {
     const response = await apiClient.delete(`/api/recruiters/${id}`);
+    return response.data;
+  },
+
+  bulkImportRecruiters: async (recruiters: Partial<Recruiter>[]) => {
+    const response = await apiClient.post('/api/recruiters/bulk-import', { recruiters });
+    return response.data;
+  },
+};
+
+// ============ OUTREACH SERVICE ============
+export const outreachService = {
+  sendEmail: async (data: { recruiter_id: string; template_id?: string; content?: string }) => {
+    const response = await apiClient.post('/api/outreach/email', data);
+    return response.data;
+  },
+
+  sendWhatsApp: async (data: { recruiter_id: string; content: string }) => {
+    const response = await apiClient.post('/api/outreach/whatsapp', data);
+    return response.data;
+  },
+
+  getHistory: async (recruiterId: string) => {
+    const response = await apiClient.get(`/api/outreach/history/${recruiterId}`);
+    return response.data;
+  },
+
+  getTemplates: async () => {
+    const response = await apiClient.get('/api/templates');
+    return response.data;
+  },
+
+  createTemplate: async (data: Partial<EmailTemplate>) => {
+    const response = await apiClient.post('/api/templates', data);
     return response.data;
   },
 };

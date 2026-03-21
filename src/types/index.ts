@@ -60,15 +60,67 @@ export interface Lead {
 // Recruiter Data
 export interface Recruiter {
   id: string;
-  name: string;
-  company: string;
+  company_name: string;
+  recruiter_name: string;
   email: string;
+  phone?: string;
   whatsapp?: string;
-  industry: string;
-  status: 'active' | 'inactive' | 'pending';
-  leadsSent: number;
-  dealsClosed: number;
-  lastContact: string;
+  location?: string;
+  company_size?: string;
+  hiring_active: boolean;
+  source: 'scrape' | 'manual' | 'api';
+  scrape_date?: string;
+  status: 'new' | 'contacted' | 'interested' | 'replied' | 'deal_closed' | 'active' | 'inactive';
+  last_outreach?: string;
+  next_outreach?: string;
+  outreach_count: number;
+  reply_received: boolean;
+  leadsSent?: number; // Backend compatibility
+  dealsClosed?: number; // Backend compatibility
+  createdAt: string;
+  updatedAt: string;
+}
+
+// Outreach Message
+export interface OutreachMessage {
+  id: string;
+  recruiter_id: string;
+  message_type: 'email' | 'whatsapp' | 'sms';
+  content: string;
+  template_id?: string;
+  sent_at?: string;
+  delivered: boolean;
+  opened: boolean;
+  clicked: boolean;
+  replied: boolean;
+  status: 'pending' | 'sent' | 'failed' | 'replied';
+  createdAt: string;
+}
+
+// Email Template
+export interface EmailTemplate {
+  id: string;
+  name: string;
+  subject: string;
+  body: string;
+  variables: string[];
+  category: 'intro' | 'follow-up' | 'offer';
+  is_active: boolean;
+  createdAt: string;
+}
+
+// Proposal
+export interface Proposal {
+  id: string;
+  recruiter_id: string;
+  deal_id?: string;
+  pdf_url?: string;
+  amount?: number;
+  status: 'draft' | 'sent' | 'viewed' | 'accepted' | 'rejected';
+  sent_at?: string;
+  viewed_at?: string;
+  accepted_at?: string;
+  createdAt: string;
 }
 
 // Deal Data
