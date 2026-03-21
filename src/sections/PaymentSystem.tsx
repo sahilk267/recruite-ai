@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   CreditCard, 
   Wallet, 
@@ -11,11 +11,14 @@ import {
   Bell,
   Calendar,
   Users,
-  FileText
+  FileText,
+  Loader,
+  RefreshCw
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Switch } from '@/components/ui/switch';
+import { Button } from '@/components/ui/button';
 import { 
   AreaChart, 
   Area, 
@@ -25,14 +28,16 @@ import {
   Tooltip, 
   ResponsiveContainer
 } from 'recharts';
+import { paymentService } from '@/services';
+import { toast } from 'sonner';
 
 interface Payment {
   id: string;
-  recruiterName: string;
-  company: string;
+  recruiterName?: string;
+  company?: string;
   amount: number;
-  type: 'pay_per_lead' | 'subscription' | 'wallet';
-  status: 'pending' | 'invoiced' | 'paid' | 'overdue';
+  type?: 'pay_per_lead' | 'subscription' | 'wallet';
+  status?: 'pending' | 'invoiced' | 'paid' | 'overdue';
   invoiceDate?: string;
   paidDate?: string;
   leadCount?: number;
@@ -54,13 +59,9 @@ const revenueData = [
 ];
 
 export function PaymentSystem() {
-  const [payments] = useState<Payment[]>([
-    { id: '1', recruiterName: 'Rajesh Kumar', company: 'TCS', amount: 45000, type: 'pay_per_lead', status: 'paid', invoiceDate: '2024-01-15', paidDate: '2024-01-16', leadCount: 15 },
-    { id: '2', recruiterName: 'Priya Sharma', company: 'Infosys', amount: 32000, type: 'pay_per_lead', status: 'invoiced', invoiceDate: '2024-01-18', leadCount: 10 },
-    { id: '3', recruiterName: 'Amit Patel', company: 'Wipro', amount: 28000, type: 'subscription', status: 'pending' },
-    { id: '4', recruiterName: 'Sneha Gupta', company: 'Google India', amount: 75000, type: 'pay_per_lead', status: 'overdue', invoiceDate: '2024-01-10', leadCount: 25 },
-    { id: '5', recruiterName: 'Vikram Rao', company: 'Amazon', amount: 52000, type: 'wallet', status: 'paid', paidDate: '2024-01-17' },
-  ]);
+  const [payments, setPayments] = useState<Payment[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+  const [isRecording, setIsRecording] = useState<string | null>(null);
 
   const [options, setOptions] = useState<PaymentOption[]>([
     { id: 'payPerLead', name: 'Pay-per-Lead', description: 'Charge for each qualified lead', enabled: true, icon: Users },
@@ -70,290 +71,248 @@ export function PaymentSystem() {
     { id: 'paymentReminder', name: 'Payment Reminder', description: 'Auto-send payment reminders', enabled: true, icon: Bell },
   ]);
 
+  // Fetch payments from API
+  useEffect(() => {
+    fetchPayments();
+  }, []);
+
+  const fetchPayments = async () => {
+    setIsLoading(true);
+    try {
+      const response = await paymentService.getAllPayments({ page: 1, pageSize: 20 });
+      setPayments(response.data || []);
+    } catch (error) {
+      console.error('Error fetching payments:', error);
+      toast.error('Failed to load payments');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  const recordPayment = async (paymentId: string) => {
+    setIsRecording(paymentId);
+    try {
+      await paymentService.recordPayment(paymentId);
+      
+      // Update payment status
+      setPayments(payments.map(p =>
+        p.id === paymentId
+          ? { ...p, status: 'paid', paidDate: new Date().toISOString().split('T')[0] }
+          : p
+      ));
+      
+      toast.success('Payment recorded successfully');
+    } catch (error) {
+      console.error('Error recording payment:', error);
+      toast.error('Failed to record payment');
+    } finally {
+      setIsRecording(null);
+    }
+  };
+
   const toggleOption = (id: string) => {
     setOptions(options.map(o => 
       o.id === id ? { ...o, enabled: !o.enabled } : o
     ));
   };
 
-  const getStatusBadge = (status: string) => {
-    const styles = {
-      pending: 'bg-zinc-600/20 text-zinc-400',
-      invoiced: 'bg-cyan-600/20 text-cyan-400',
-      paid: 'bg-emerald-600/20 text-emerald-400',
-      overdue: 'bg-red-600/20 text-red-400',
+  const getStatusBadge = (status?: string) => {
+    const styles: Record<string, string> = {
+      'pending': 'bg-zinc-600/20 text-zinc-400',
+      'invoiced': 'bg-cyan-600/20 text-cyan-400',
+      'paid': 'bg-emerald-600/20 text-emerald-400',
+      'overdue': 'bg-red-600/20 text-red-400',
     };
-    return styles[status as keyof typeof styles];
+    return styles[status || 'pending'] || styles.pending;
   };
 
-  const getTypeBadge = (type: string) => {
-    const styles = {
-      pay_per_lead: 'bg-violet-600/20 text-violet-400',
-      subscription: 'bg-amber-600/20 text-amber-400',
-      wallet: 'bg-cyan-600/20 text-cyan-400',
+  const getTypeBadge = (type?: string) => {
+    const styles: Record<string, string> = {
+      'pay_per_lead': 'bg-violet-600/20 text-violet-400',
+      'subscription': 'bg-amber-600/20 text-amber-400',
+      'wallet': 'bg-cyan-600/20 text-cyan-400',
     };
-    return styles[type as keyof typeof styles];
+    return styles[type || 'pay_per_lead'] || styles.pay_per_lead;
   };
 
   const stats = {
-    totalRevenue: 452000,
-    pending: 89000,
-    paid: 342000,
-    overdue: 21000,
+    totalRevenue: payments.reduce((sum, p) => sum + p.amount, 0),
+    pending: payments.filter(p => p.status === 'pending').reduce((sum, p) => sum + p.amount, 0),
+    paid: payments.filter(p => p.status === 'paid').reduce((sum, p) => sum + p.amount, 0),
+    overdue: payments.filter(p => p.status === 'overdue').reduce((sum, p) => sum + p.amount, 0),
   };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
-      {/* Stats */}
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Payment System</h1>
+        <Button 
+          onClick={fetchPayments}
+          className="bg-violet-600 hover:bg-violet-700 text-white"
+        >
+          <RefreshCw className="w-4 h-4 mr-2" />
+          Refresh
+        </Button>
+      </div>
+
+      {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-[#1a1a1a] border-white/6">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-zinc-400 text-sm">Total Revenue</p>
-                <p className="text-2xl font-bold text-emerald-400">₹{(stats.totalRevenue / 1000).toFixed(0)}K</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 flex items-center justify-center">
-                <IndianRupee className="w-5 h-5 text-emerald-400" />
-              </div>
-            </div>
+            <p className="text-zinc-400 text-xs">Total Revenue</p>
+            <p className="text-2xl font-bold text-violet-400">₹{(stats.totalRevenue / 100000).toFixed(1)}L</p>
           </CardContent>
         </Card>
-
         <Card className="bg-[#1a1a1a] border-white/6">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-zinc-400 text-sm">Pending</p>
-                <p className="text-2xl font-bold text-amber-400">₹{(stats.pending / 1000).toFixed(0)}K</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center">
-                <Calendar className="w-5 h-5 text-amber-400" />
-              </div>
-            </div>
+            <p className="text-zinc-400 text-xs">Pending</p>
+            <p className="text-2xl font-bold text-amber-400">₹{(stats.pending / 100000).toFixed(1)}L</p>
           </CardContent>
         </Card>
-
         <Card className="bg-[#1a1a1a] border-white/6">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-zinc-400 text-sm">Paid</p>
-                <p className="text-2xl font-bold text-cyan-400">₹{(stats.paid / 1000).toFixed(0)}K</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-cyan-600/20 flex items-center justify-center">
-                <Check className="w-5 h-5 text-cyan-400" />
-              </div>
-            </div>
+            <p className="text-zinc-400 text-xs">Paid</p>
+            <p className="text-2xl font-bold text-emerald-400">₹{(stats.paid / 100000).toFixed(1)}L</p>
           </CardContent>
         </Card>
-
         <Card className="bg-[#1a1a1a] border-white/6">
           <CardContent className="p-4">
-            <div className="flex items-center justify-between">
-              <div>
-                <p className="text-zinc-400 text-sm">Overdue</p>
-                <p className="text-2xl font-bold text-red-400">₹{(stats.overdue / 1000).toFixed(0)}K</p>
-              </div>
-              <div className="w-10 h-10 rounded-xl bg-red-600/20 flex items-center justify-center">
-                <Receipt className="w-5 h-5 text-red-400" />
-              </div>
-            </div>
+            <p className="text-zinc-400 text-xs">Overdue</p>
+            <p className="text-2xl font-bold text-red-400">₹{(stats.overdue / 100000).toFixed(1)}L</p>
           </CardContent>
         </Card>
       </div>
 
-      {/* Payment Flow */}
-      <Card className="bg-[#1a1a1a] border-white/6">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <ArrowRight className="w-5 h-5 text-violet-400" />
-            Payment Flow
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="flex items-center justify-between overflow-x-auto pb-4">
-            {[
-              { label: 'Lead Ready', icon: Users, desc: 'Lead qualified' },
-              { label: 'Invoice', icon: FileText, desc: 'Auto generated' },
-              { label: 'Payment Link', icon: CreditCard, desc: 'Sent to recruiter' },
-              { label: 'Confirm', icon: Check, desc: 'Payment received' },
-              { label: 'Unlock', icon: Unlock, desc: 'Lead unlocked' },
-            ].map((step, index) => {
-              const Icon = step.icon;
-              return (
-                <div key={index} className="flex items-center">
-                  <div className="flex flex-col items-center">
-                    <div className={`w-14 h-14 rounded-full flex items-center justify-center ${
-                      index <= 2 ? 'bg-violet-600/20 border-2 border-violet-500/30' : 'bg-zinc-800'
-                    }`}>
-                      <Icon className={`w-6 h-6 ${index <= 2 ? 'text-violet-400' : 'text-zinc-500'}`} />
-                    </div>
-                    <p className="text-sm font-medium mt-2">{step.label}</p>
-                    <p className="text-xs text-zinc-500">{step.desc}</p>
-                  </div>
-                  {index < 4 && (
-                    <ArrowRight className="w-6 h-6 text-zinc-600 mx-4 flex-shrink-0" />
-                  )}
-                </div>
-              );
-            })}
-          </div>
-        </CardContent>
-      </Card>
+      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+        {/* Revenue Chart */}
+        <Card className="bg-[#1a1a1a] border-white/6 lg:col-span-2">
+          <CardHeader>
+            <CardTitle>Revenue Growth</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <div className="h-64">
+              <ResponsiveContainer width="100%" height="100%">
+                <AreaChart data={revenueData}>
+                  <defs>
+                    <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
+                      <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.3}/>
+                      <stop offset="95%" stopColor="#7c3aed" stopOpacity={0}/>
+                    </linearGradient>
+                  </defs>
+                  <CartesianGrid strokeDasharray="3 3" stroke="#333" />
+                  <XAxis dataKey="name" stroke="#666" fontSize={12} />
+                  <YAxis stroke="#666" fontSize={12} tickFormatter={(v) => `₹${v/100000}L`} />
+                  <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }} />
+                  <Area type="monotone" dataKey="revenue" stroke="#7c3aed" fillOpacity={1} fill="url(#colorRevenue)" />
+                </AreaChart>
+              </ResponsiveContainer>
+            </div>
+          </CardContent>
+        </Card>
 
-      {/* Payment Options & Transactions */}
-      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
         {/* Payment Options */}
         <Card className="bg-[#1a1a1a] border-white/6">
           <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <CreditCard className="w-5 h-5 text-cyan-400" />
-              Payment Options
-            </CardTitle>
+            <CardTitle className="text-lg">Payment Options</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-4">
-            {options.map((option) => {
+          <CardContent className="space-y-3">
+            {options.map(option => {
               const Icon = option.icon;
               return (
-                <div key={option.id} className="flex items-center justify-between p-3 rounded-lg bg-black/30">
+                <div key={option.id} className="flex items-center justify-between">
                   <div className="flex items-center gap-3">
-                    <div className={`w-10 h-10 rounded-lg flex items-center justify-center ${option.enabled ? 'bg-cyan-600/20' : 'bg-zinc-800'}`}>
-                      <Icon className={`w-5 h-5 ${option.enabled ? 'text-cyan-400' : 'text-zinc-500'}`} />
-                    </div>
-                    <div>
-                      <p className="font-medium text-sm">{option.name}</p>
-                      <p className="text-xs text-zinc-500">{option.description}</p>
-                    </div>
+                    <Icon className="w-4 h-4 text-zinc-400" />
+                    <span className="text-sm">{option.name}</span>
                   </div>
-                  <Switch 
-                    checked={option.enabled} 
-                    onCheckedChange={() => toggleOption(option.id)}
-                  />
+                  <button
+                    onClick={() => toggleOption(option.id)}
+                    className={`relative inline-flex h-5 w-10 items-center rounded-full transition-colors ${
+                      option.enabled ? 'bg-violet-600' : 'bg-white/10'
+                    }`}
+                  >
+                    <span
+                      className={`inline-block h-4 w-4 transform rounded-full bg-white transition-transform ${
+                        option.enabled ? 'translate-x-5' : 'translate-x-0.5'
+                      }`}
+                    />
+                  </button>
                 </div>
               );
             })}
           </CardContent>
         </Card>
-
-        {/* Recent Transactions */}
-        <Card className="bg-[#1a1a1a] border-white/6">
-          <CardHeader>
-            <CardTitle className="text-lg flex items-center gap-2">
-              <Receipt className="w-5 h-5 text-amber-400" />
-              Recent Transactions
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="space-y-3">
-            {payments.map((payment) => (
-              <div key={payment.id} className="p-3 rounded-lg bg-black/30">
-                <div className="flex items-center justify-between mb-2">
-                  <div className="flex items-center gap-2">
-                    <span className="font-medium text-sm">{payment.recruiterName}</span>
-                    <span className="text-zinc-500">•</span>
-                    <span className="text-sm text-zinc-400">{payment.company}</span>
-                  </div>
-                  <Badge className={getStatusBadge(payment.status)}>
-                    {payment.status}
-                  </Badge>
-                </div>
-                <div className="flex items-center justify-between">
-                  <div className="flex items-center gap-2">
-                    <Badge className={getTypeBadge(payment.type)}>
-                      {payment.type.replace('_', ' ')}
-                    </Badge>
-                    {payment.leadCount && (
-                      <span className="text-xs text-zinc-500">{payment.leadCount} leads</span>
-                    )}
-                  </div>
-                  <p className="font-bold text-cyan-400">₹{payment.amount.toLocaleString()}</p>
-                </div>
-                {payment.invoiceDate && (
-                  <p className="text-xs text-zinc-500 mt-1">
-                    Invoiced: {payment.invoiceDate}
-                    {payment.paidDate && ` • Paid: ${payment.paidDate}`}
-                  </p>
-                )}
-              </div>
-            ))}
-          </CardContent>
-        </Card>
       </div>
 
-      {/* Revenue Chart */}
+      {/* Payments Table */}
       <Card className="bg-[#1a1a1a] border-white/6">
         <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <IndianRupee className="w-5 h-5 text-emerald-400" />
-            Revenue Trend
-          </CardTitle>
+          <CardTitle>Recent Payments</CardTitle>
         </CardHeader>
         <CardContent>
-          <div className="h-64">
-            <ResponsiveContainer width="100%" height="100%">
-              <AreaChart data={revenueData}>
-                <defs>
-                  <linearGradient id="colorRevenue" x1="0" y1="0" x2="0" y2="1">
-                    <stop offset="5%" stopColor="#10b981" stopOpacity={0.3}/>
-                    <stop offset="95%" stopColor="#10b981" stopOpacity={0}/>
-                  </linearGradient>
-                </defs>
-                <CartesianGrid strokeDasharray="3 3" stroke="#333" />
-                <XAxis dataKey="name" stroke="#666" fontSize={12} />
-                <YAxis stroke="#666" fontSize={12} tickFormatter={(v) => `₹${v/1000}K`} />
-                <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #333' }} />
-                <Area type="monotone" dataKey="revenue" stroke="#10b981" fillOpacity={1} fill="url(#colorRevenue)" />
-              </AreaChart>
-            </ResponsiveContainer>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Wallet Overview */}
-      <Card className="bg-[#1a1a1a] border-white/6">
-        <CardHeader>
-          <CardTitle className="text-lg flex items-center gap-2">
-            <Wallet className="w-5 h-5 text-emerald-400" />
-            Wallet Overview
-          </CardTitle>
-        </CardHeader>
-        <CardContent>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4">
-            <div className="p-4 rounded-lg bg-black/30">
-              <p className="text-sm text-zinc-500">Total Wallet Balance</p>
-              <p className="text-2xl font-bold text-emerald-400">₹1,25,000</p>
-              <p className="text-xs text-zinc-500 mt-1">Across all recruiters</p>
-            </div>
-            <div className="p-4 rounded-lg bg-black/30">
-              <p className="text-sm text-zinc-500">Active Wallets</p>
-              <p className="text-2xl font-bold text-cyan-400">23</p>
-              <p className="text-xs text-zinc-500 mt-1">Recruiters with balance</p>
-            </div>
-            <div className="p-4 rounded-lg bg-black/30">
-              <p className="text-sm text-zinc-500">Avg. Wallet Size</p>
-              <p className="text-2xl font-bold text-amber-400">₹5,435</p>
-              <p className="text-xs text-zinc-500 mt-1">Per recruiter</p>
-            </div>
-          </div>
-        </CardContent>
-      </Card>
-
-      {/* Automation Status */}
-      <Card className="bg-[#1a1a1a] border-white/6">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 flex items-center justify-center">
-                <Zap className="w-5 h-5 text-emerald-400" />
-              </div>
-              <div>
-                <p className="font-medium">Payment Automation</p>
-                <p className="text-sm text-zinc-500">Invoicing, reminders, and processing automated</p>
-              </div>
-            </div>
-            <Badge className="bg-emerald-600/20 text-emerald-400 text-lg px-4 py-2">
-              90% Automated
-            </Badge>
+          <div className="overflow-x-auto">
+            <table className="w-full text-sm">
+              <thead>
+                <tr className="border-b border-white/10">
+                  <th className="px-4 py-2 text-left text-zinc-400">ID</th>
+                  <th className="px-4 py-2 text-left text-zinc-400">Amount</th>
+                  <th className="px-4 py-2 text-left text-zinc-400">Type</th>
+                  <th className="px-4 py-2 text-left text-zinc-400">Status</th>
+                  <th className="px-4 py-2 text-right text-zinc-400">Actions</th>
+                </tr>
+              </thead>
+              <tbody>
+                {payments.map(payment => (
+                  <tr key={payment.id} className="border-b border-white/6 hover:bg-white/5">
+                    <td className="px-4 py-3 text-xs text-zinc-400">{payment.id.substring(0, 8)}</td>
+                    <td className="px-4 py-3 font-semibold">₹{payment.amount.toLocaleString()}</td>
+                    <td className="px-4 py-3">
+                      <Badge className={getTypeBadge(payment.type)}>
+                        {payment.type?.replace('_', ' ') || 'pay_per_lead'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3">
+                      <Badge className={getStatusBadge(payment.status)}>
+                        {payment.status || 'pending'}
+                      </Badge>
+                    </td>
+                    <td className="px-4 py-3 text-right">
+                      {payment.status === 'pending' && (
+                        <Button
+                          size="sm"
+                          onClick={() => recordPayment(payment.id)}
+                          disabled={isRecording === payment.id}
+                          className="bg-emerald-600 hover:bg-emerald-700 text-white text-xs"
+                        >
+                          {isRecording === payment.id ? (
+                            <>
+                              <Loader className="w-3 h-3 mr-1 animate-spin" />
+                              Recording...
+                            </>
+                          ) : (
+                            <>
+                              <Check className="w-3 h-3 mr-1" />
+                              Record
+                            </>
+                          )}
+                        </Button>
+                      )}
+                      {payment.status === 'paid' && (
+                        <Badge className="bg-emerald-600/20 text-emerald-400">Paid</Badge>
+                      )}
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
         </CardContent>
       </Card>

@@ -1,4 +1,6 @@
 import { useState } from 'react';
+import { useAuth } from './context/AuthContext';
+import { LoginModal } from './components/LoginModal';
 import { Sidebar } from './components/Sidebar';
 import { Header } from './components/Header';
 import { DashboardOverview } from './sections/DashboardOverview';
@@ -39,8 +41,26 @@ type Section =
   | 'automation-levels';
 
 function App() {
+  const { isAuthenticated, isLoading } = useAuth();
   const [activeSection, setActiveSection] = useState<Section>('dashboard');
   const [sidebarOpen, setSidebarOpen] = useState(true);
+
+  // Show loading state
+  if (isLoading) {
+    return (
+      <div className="min-h-screen flex items-center justify-center bg-black text-white">
+        <div className="text-center">
+          <div className="animate-spin w-12 h-12 border-4 border-blue-500 border-t-transparent rounded-full mx-auto mb-4"></div>
+          <p>Loading...</p>
+        </div>
+      </div>
+    );
+  }
+
+  // Show login modal if not authenticated
+  if (!isAuthenticated) {
+    return <LoginModal />;
+  }
 
   const renderSection = () => {
     switch (activeSection) {

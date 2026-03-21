@@ -11,11 +11,14 @@ import {
   MapPin,
   Sparkles,
   Shield,
-  Zap
+  Zap,
+  Loader
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
+import { leadService } from '@/services';
+import { toast, Toaster } from 'sonner';
 
 interface FormField {
   id: string;
@@ -41,7 +44,55 @@ export function LeadCapture() {
   const [otpVerified, setOtpVerified] = useState(false);
   const [otp, setOtp] = useState(['', '', '', '', '', '']);
   const [extractedSkills, setExtractedSkills] = useState<string[]>([]);
+  const [isSubmitting, setIsSubmitting] = useState(false);
+  const [leadsCount, setLeadsCount] = useState(8432);
   const fileInputRef = useRef<HTMLInputElement>(null);
+
+  // ... rest of the component code
+
+  const handleSubmit = async () => {
+    // Validate required fields
+    if (!formData.name || !formData.email || !formData.phone || !formData.experience) {
+      toast.error('Please fill all required fields');
+      return;
+    }
+
+    if (!otpVerified) {
+      toast.error('Please verify your phone number with OTP');
+      return;
+    }
+
+    setIsSubmitting(true);
+    try {
+      // Create lead via API
+      const leadData = {
+        name: formData.name,
+        email: formData.email,
+        phone: formData.phone,
+        experience: parseInt(formData.experience),
+        location: formData.location || undefined,
+        skills: extractedSkills.length > 0 ? extractedSkills : (formData.skills ? formData.skills.split(',').map(s => s.trim()) : []),
+        resume: uploadedFile?.name || undefined,
+      };
+
+      await leadService.createLead(leadData);
+      
+      // Reset form
+      setFormData({ name: '', email: '', phone: '', experience: '', location: '', skills: '' });
+      setUploadedFile(null);
+      setOtp(['', '', '', '', '', '']);
+      setOtpSent(false);
+      setOtpVerified(false);
+      setExtractedSkills([]);
+      setLeadsCount(leadsCount + 1);
+      
+      toast.success('✅ Lead created successfully!');
+    } catch (error: any) {
+      toast.error(error.message || 'Failed to create lead');
+    } finally {
+      setIsSubmitting(false);
+    }
+  };
 
   const formFields: FormField[] = [
     { id: 'name', label: 'Full Name', type: 'text', icon: User, required: true, placeholder: 'John Doe' },
@@ -114,7 +165,7 @@ export function LeadCapture() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-zinc-400 text-sm">Total Leads</p>
-                <p className="text-2xl font-bold">8,432</p>
+                <p className="text-2xl font-bold">{leadsCount.toLocaleString()}</p>
               </div>
               <div className="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center">
                 <Users className="w-5 h-5 text-violet-400" />
@@ -297,8 +348,19 @@ export function LeadCapture() {
               ) : null}
             </div>
 
-            <Button className="w-full gradient-primary hover:opacity-90 py-3">
-              Submit Lead
+            <Button 
+              onClick={handleSubmit}
+              disabled={isSubmitting || !otpVerified}
+              className="w-full gradient-primary hover:opacity-90 py-3 flex items-center justify-center gap-2"
+            >
+              {isSubmitting ? (
+                <>
+                  <Loader className="w-4 h-4 animate-spin" />
+                  Submitting...
+                </>
+              ) : (
+                <>✨ Submit Lead</>
+              )}
             </Button>
           </CardContent>
         </Card>
@@ -378,6 +440,8 @@ export function LeadCapture() {
           </div>
         </CardContent>
       </Card>
+
+      <Toaster position="top-right" />
     </div>
   );
 }

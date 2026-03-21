@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { 
   Search, 
   Filter, 
@@ -11,13 +11,17 @@ import {
   RefreshCw,
   Download,
   ExternalLink,
-  Clock
+  Clock,
+  Loader
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Progress } from '@/components/ui/progress';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { jobService } from '@/services';
+import { toast } from 'sonner';
+
 interface JobSource {
   id: string;
   name: string;
@@ -28,14 +32,14 @@ interface JobSource {
   quality: number;
 }
 
-interface ScrapedJob {
+interface Job {
   id: string;
   title: string;
-  company: string;
-  location: string;
-  source: string;
-  status: 'new' | 'processed' | 'duplicate' | 'spam';
-  scrapedAt: string;
+  company?: string;
+  location?: string;
+  description?: string;
+  status?: 'new' | 'processed' | 'published';
+  createdAt?: string;
 }
 
 export function JobIntelligence() {
@@ -47,40 +51,96 @@ export function JobIntelligence() {
     { id: 'api1', name: 'Recruiter API', icon: Zap, jobsScraped: 892, lastScraped: '1 hour ago', status: 'active', quality: 98 },
   ]);
 
-  const [jobs] = useState<ScrapedJob[]>([
-    { id: '1', title: 'Senior React Developer', company: 'TCS', location: 'Bangalore', source: 'LinkedIn', status: 'new', scrapedAt: '2 min ago' },
-    { id: '2', title: 'Python Full Stack', company: 'Infosys', location: 'Hyderabad', source: 'Indeed', status: 'processed', scrapedAt: '5 min ago' },
-    { id: '3', title: 'Java Developer', company: 'Wipro', location: 'Chennai', source: 'Naukri', status: 'duplicate', scrapedAt: '8 min ago' },
-    { id: '4', title: 'Data Scientist', company: 'Google', location: 'Mumbai', source: 'LinkedIn', status: 'new', scrapedAt: '10 min ago' },
-    { id: '5', title: 'DevOps Engineer', company: 'Amazon', location: 'Pune', source: 'Indeed', status: 'spam', scrapedAt: '12 min ago' },
-    { id: '6', title: 'UI/UX Designer', company: 'Microsoft', location: 'Delhi', source: 'Foundit', status: 'processed', scrapedAt: '15 min ago' },
-  ]);
-
+  const [jobs, setJobs] = useState<Job[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
   const [isScraping, setIsScraping] = useState(false);
-  const [stats] = useState({
-    totalScraped: 12709,
-    duplicates: 1247,
-    spam: 389,
-    processed: 11073,
-  });
+
+  // Fetch jobs from API
+  useEffect(() => {
+    fetchJobs();
+  }, []);
+
+  const fetchJobs = async () => {
+    setIsLoading(true);
+    try {
+      const response = await jobService.getAllJobs({ page: 1, pageSize: 20 });
+      setJobs(response.data || []);
+    } catch (error) {
+      console.error('Error fetching jobs:', error);
+      toast.error('Failed to load jobs');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const startScraping = () => {
     setIsScraping(true);
-    setTimeout(() => setIsScraping(false), 3000);
+    setTimeout(() => {
+      setIsScraping(false);
+      toast.success('Job scraping completed!');
+      fetchJobs();
+    }, 3000);
   };
 
-  const getStatusBadge = (status: string) => {
-    const styles = {
-      new: 'bg-violet-600/20 text-violet-400',
-      processed: 'bg-emerald-600/20 text-emerald-400',
-      duplicate: 'bg-amber-600/20 text-amber-400',
-      spam: 'bg-red-600/20 text-red-400',
+  const getStatusBadge = (status?: string) => {
+    const styles: Record<string, string> = {
+      'new': 'bg-violet-600/20 text-violet-400',
+      'processed': 'bg-emerald-600/20 text-emerald-400',
+      'published': 'bg-blue-600/20 text-blue-400',
+      'duplicate': 'bg-amber-600/20 text-amber-400',
+      'spam': 'bg-red-600/20 text-red-400',
     };
-    return styles[status as keyof typeof styles] || styles.new;
+    return styles[status || 'new'] || styles.new;
   };
+
+  const stats = {
+    totalScraped: sources.reduce((sum, s) => sum + s.jobsScraped, 0),
+    duplicates: Math.floor(sources.reduce((sum, s) => sum + s.jobsScraped, 0) * 0.1),
+    spam: Math.floor(sources.reduce((sum, s) => sum + s.jobsScraped, 0) * 0.03),
+    processed: jobs.length,
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <Loader className="w-8 h-8 animate-spin" />
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-6">
+      {/* Header */}
+      <div className="flex items-center justify-between">
+        <h1 className="text-3xl font-bold">Job Intelligence</h1>
+        <div className="flex gap-2">
+          <Button 
+            onClick={fetchJobs}
+            className="bg-zinc-700 hover:bg-zinc-600 text-white"
+          >
+            <RefreshCw className="w-4 h-4 mr-2" />
+            Refresh
+          </Button>
+          <Button 
+            onClick={startScraping}
+            disabled={isScraping}
+            className="bg-violet-600 hover:bg-violet-700 text-white"
+          >
+            {isScraping ? (
+              <>
+                <Loader className="w-4 h-4 mr-2 animate-spin" />
+                Scraping...
+              </>
+            ) : (
+              <>
+                <Zap className="w-4 h-4 mr-2" />
+                Start Scraping
+              </>
+            )}
+          </Button>
+        </div>
+      </div>
+
       {/* Stats Cards */}
       <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
         <Card className="bg-[#1a1a1a] border-white/6">
@@ -90,9 +150,7 @@ export function JobIntelligence() {
                 <p className="text-zinc-400 text-sm">Total Scraped</p>
                 <p className="text-2xl font-bold">{stats.totalScraped.toLocaleString()}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center">
-                <Database className="w-5 h-5 text-violet-400" />
-              </div>
+              <Database className="w-8 h-8 text-violet-400/50" />
             </div>
             <Progress value={100} className="mt-3" />
           </CardContent>
@@ -103,13 +161,11 @@ export function JobIntelligence() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-zinc-400 text-sm">Processed</p>
-                <p className="text-2xl font-bold text-emerald-400">{stats.processed.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-emerald-400">{stats.processed}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 flex items-center justify-center">
-                <Check className="w-5 h-5 text-emerald-400" />
-              </div>
+              <Check className="w-8 h-8 text-emerald-400/50" />
             </div>
-            <Progress value={87} className="mt-3 bg-emerald-900" />
+            <Progress value={Math.floor((stats.processed / stats.totalScraped) * 100)} className="mt-3" />
           </CardContent>
         </Card>
 
@@ -118,13 +174,11 @@ export function JobIntelligence() {
             <div className="flex items-center justify-between">
               <div>
                 <p className="text-zinc-400 text-sm">Duplicates</p>
-                <p className="text-2xl font-bold text-amber-400">{stats.duplicates.toLocaleString()}</p>
+                <p className="text-2xl font-bold text-amber-400">{stats.duplicates}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-amber-600/20 flex items-center justify-center">
-                <Filter className="w-5 h-5 text-amber-400" />
-              </div>
+              <Trash2 className="w-8 h-8 text-amber-400/50" />
             </div>
-            <Progress value={10} className="mt-3 bg-amber-900" />
+            <Progress value={20} className="mt-3" />
           </CardContent>
         </Card>
 
@@ -132,197 +186,103 @@ export function JobIntelligence() {
           <CardContent className="p-4">
             <div className="flex items-center justify-between">
               <div>
-                <p className="text-zinc-400 text-sm">Spam Blocked</p>
-                <p className="text-2xl font-bold text-red-400">{stats.spam.toLocaleString()}</p>
+                <p className="text-zinc-400 text-sm">Spam</p>
+                <p className="text-2xl font-bold text-red-400">{stats.spam}</p>
               </div>
-              <div className="w-10 h-10 rounded-xl bg-red-600/20 flex items-center justify-center">
-                <Shield className="w-5 h-5 text-red-400" />
-              </div>
+              <Shield className="w-8 h-8 text-red-400/50" />
             </div>
-            <Progress value={3} className="mt-3 bg-red-900" />
+            <Progress value={3} className="mt-3" />
           </CardContent>
         </Card>
       </div>
 
-      {/* Main Content */}
-      <Tabs defaultValue="sources" className="w-full">
+      {/* Tabs */}
+      <Tabs defaultValue="jobs" className="w-full">
         <TabsList className="bg-[#1a1a1a] border border-white/6 p-1">
-          <TabsTrigger value="sources" className="data-[state=active]:bg-violet-600/20 data-[state=active]:text-violet-400">
-            <Database className="w-4 h-4 mr-2" />
-            Sources
-          </TabsTrigger>
           <TabsTrigger value="jobs" className="data-[state=active]:bg-violet-600/20 data-[state=active]:text-violet-400">
-            <Search className="w-4 h-4 mr-2" />
-            Scraped Jobs
+            Jobs
           </TabsTrigger>
-          <TabsTrigger value="filters" className="data-[state=active]:bg-violet-600/20 data-[state=active]:text-violet-400">
-            <Filter className="w-4 h-4 mr-2" />
-            Filters
+          <TabsTrigger value="sources" className="data-[state=active]:bg-violet-600/20 data-[state=active]:text-violet-400">
+            Sources
           </TabsTrigger>
         </TabsList>
 
-        <TabsContent value="sources" className="mt-4">
+        <TabsContent value="jobs" className="mt-4">
           <Card className="bg-[#1a1a1a] border-white/6">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Globe className="w-5 h-5 text-violet-400" />
-                Job Sources
-              </CardTitle>
-              <Button 
-                onClick={startScraping}
-                disabled={isScraping}
-                className="gradient-primary"
-              >
-                <RefreshCw className={`w-4 h-4 mr-2 ${isScraping && 'animate-spin'}`} />
-                {isScraping ? 'Scraping...' : 'Run Scraper'}
-              </Button>
+            <CardHeader>
+              <CardTitle>Jobs ({jobs.length})</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-3">
-                {sources.map((source) => {
-                  const Icon = source.icon;
-                  return (
-                    <div 
-                      key={source.id} 
-                      className="flex items-center justify-between p-4 rounded-lg bg-black/30 hover:bg-black/50 transition-colors"
-                    >
-                      <div className="flex items-center gap-4">
-                        <div className="w-10 h-10 rounded-xl bg-violet-600/20 flex items-center justify-center">
-                          <Icon className="w-5 h-5 text-violet-400" />
-                        </div>
-                        <div>
-                          <p className="font-medium">{source.name}</p>
-                          <div className="flex items-center gap-3 mt-1">
-                            <span className="text-xs text-zinc-500">
-                              <Clock className="w-3 h-3 inline mr-1" />
-                              {source.lastScraped}
-                            </span>
-                            <span className="text-xs text-zinc-500">
-                              Quality: {source.quality}%
-                            </span>
-                          </div>
-                        </div>
-                      </div>
-                      <div className="flex items-center gap-4">
-                        <div className="text-right">
-                          <p className="font-medium">{source.jobsScraped.toLocaleString()}</p>
-                          <p className="text-xs text-zinc-500">jobs scraped</p>
-                        </div>
-                        <Badge className={source.status === 'active' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-amber-600/20 text-amber-400'}>
-                          {source.status}
-                        </Badge>
-                        <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-white">
-                          <ExternalLink className="w-4 h-4" />
-                        </Button>
-                      </div>
-                    </div>
-                  );
-                })}
+              <div className="overflow-x-auto">
+                <table className="w-full text-sm">
+                  <thead>
+                    <tr className="border-b border-white/10">
+                      <th className="px-4 py-2 text-left text-zinc-400">Job Title</th>
+                      <th className="px-4 py-2 text-left text-zinc-400">Company</th>
+                      <th className="px-4 py-2 text-left text-zinc-400">Location</th>
+                      <th className="px-4 py-2 text-left text-zinc-400">Status</th>
+                      <th className="px-4 py-2 text-left text-zinc-400">Posted</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {jobs.map(job => (
+                      <tr key={job.id} className="border-b border-white/6 hover:bg-white/5">
+                        <td className="px-4 py-3 font-semibold">{job.title}</td>
+                        <td className="px-4 py-3 text-zinc-400">{job.company || 'N/A'}</td>
+                        <td className="px-4 py-3 text-zinc-400">{job.location || 'N/A'}</td>
+                        <td className="px-4 py-3">
+                          <Badge className={getStatusBadge(job.status || 'new')}>
+                            {job.status || 'new'}
+                          </Badge>
+                        </td>
+                        <td className="px-4 py-3 text-xs text-zinc-500">
+                          {job.createdAt ? new Date(job.createdAt).toLocaleDateString() : 'N/A'}
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
             </CardContent>
           </Card>
         </TabsContent>
 
-        <TabsContent value="jobs" className="mt-4">
+        <TabsContent value="sources" className="mt-4">
           <Card className="bg-[#1a1a1a] border-white/6">
-            <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Search className="w-5 h-5 text-cyan-400" />
-                Recently Scraped Jobs
-              </CardTitle>
-              <div className="flex gap-2">
-                <Button variant="outline" size="sm" className="border-white/10">
-                  <Filter className="w-4 h-4 mr-2" />
-                  Filter
-                </Button>
-                <Button variant="outline" size="sm" className="border-white/10">
-                  <Download className="w-4 h-4 mr-2" />
-                  Export
-                </Button>
-              </div>
+            <CardHeader>
+              <CardTitle>Job Sources</CardTitle>
             </CardHeader>
-            <CardContent>
-              <div className="space-y-2">
-                {jobs.map((job) => (
-                  <div 
-                    key={job.id} 
-                    className="flex items-center justify-between p-3 rounded-lg bg-black/30 hover:bg-black/50 transition-colors"
-                  >
-                    <div className="flex items-center gap-3">
-                      <div className="w-8 h-8 rounded-lg bg-zinc-800 flex items-center justify-center">
-                        <span className="text-xs font-medium">{job.company[0]}</span>
-                      </div>
-                      <div>
-                        <p className="text-sm font-medium">{job.title}</p>
-                        <p className="text-xs text-zinc-500">{job.company} • {job.location} • {job.source}</p>
+            <CardContent className="space-y-4">
+              {sources.map(source => {
+                const Icon = source.icon;
+                return (
+                  <div key={source.id} className="flex items-center justify-between p-4 border border-white/10 rounded-lg hover:bg-white/5">
+                    <div className="flex items-center gap-4 flex-1">
+                      <Icon className="w-6 h-6 text-violet-400" />
+                      <div className="flex-1">
+                        <p className="font-semibold">{source.name}</p>
+                        <div className="flex items-center gap-4 text-xs text-zinc-400 mt-1">
+                          <span>📊 {source.jobsScraped.toLocaleString()} jobs</span>
+                          <span>⏱️ {source.lastScraped}</span>
+                          <span>⭐ {source.quality}% quality</span>
+                        </div>
                       </div>
                     </div>
                     <div className="flex items-center gap-3">
-                      <span className="text-xs text-zinc-500">{job.scrapedAt}</span>
-                      <Badge className={getStatusBadge(job.status)}>
-                        {job.status}
+                      <Badge className={source.status === 'active' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}>
+                        {source.status}
                       </Badge>
-                      <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-red-400">
-                        <Trash2 className="w-4 h-4" />
+                      <Button size="sm" variant="ghost">
+                        <ExternalLink className="w-4 h-4" />
                       </Button>
                     </div>
                   </div>
-                ))}
-              </div>
-            </CardContent>
-          </Card>
-        </TabsContent>
-
-        <TabsContent value="filters" className="mt-4">
-          <Card className="bg-[#1a1a1a] border-white/6">
-            <CardHeader>
-              <CardTitle className="text-lg flex items-center gap-2">
-                <Shield className="w-5 h-5 text-emerald-400" />
-                Filter Configuration
-              </CardTitle>
-            </CardHeader>
-            <CardContent className="space-y-4">
-              {[
-                { name: 'Duplicate Detection', desc: 'Remove duplicate job postings across sources', enabled: true },
-                { name: 'Spam Filter', desc: 'Filter out suspicious and low-quality postings', enabled: true },
-                { name: 'Company Validation', desc: 'Verify company existence and reputation', enabled: true },
-                { name: 'Salary Validation', desc: 'Detect and flag unrealistic salary ranges', enabled: false },
-                { name: 'Location Filter', desc: 'Filter by specified locations only', enabled: false },
-              ].map((filter, i) => (
-                <div key={i} className="flex items-center justify-between p-3 rounded-lg bg-black/30">
-                  <div>
-                    <p className="font-medium text-sm">{filter.name}</p>
-                    <p className="text-xs text-zinc-500">{filter.desc}</p>
-                  </div>
-                  <div className={`w-10 h-6 rounded-full p-1 cursor-pointer transition-colors ${filter.enabled ? 'bg-emerald-600' : 'bg-zinc-700'}`}>
-                    <div className={`w-4 h-4 rounded-full bg-white transition-transform ${filter.enabled ? 'translate-x-4' : ''}`} />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </CardContent>
           </Card>
         </TabsContent>
       </Tabs>
-
-      {/* Automation Status */}
-      <Card className="bg-[#1a1a1a] border-white/6">
-        <CardContent className="p-4">
-          <div className="flex items-center justify-between">
-            <div className="flex items-center gap-3">
-              <div className="w-10 h-10 rounded-xl bg-emerald-600/20 flex items-center justify-center">
-                <Zap className="w-5 h-5 text-emerald-400" />
-              </div>
-              <div>
-                <p className="font-medium">Automation Status</p>
-                <p className="text-sm text-zinc-500">All scraping operations are fully automated</p>
-              </div>
-            </div>
-            <Badge className="bg-emerald-600/20 text-emerald-400 text-lg px-4 py-2">
-              100% Automated
-            </Badge>
-          </div>
-        </CardContent>
-      </Card>
     </div>
   );
 }

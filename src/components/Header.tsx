@@ -1,5 +1,6 @@
-import { Search, Bell, Sun, Menu } from 'lucide-react';
+import { Search, Bell, Sun, Menu, LogOut } from 'lucide-react';
 import { useState } from 'react';
+import { useAuth } from '@/context/AuthContext';
 import { Button } from '@/components/ui/button';
 import { Input } from '@/components/ui/input';
 import {
@@ -18,6 +19,7 @@ interface HeaderProps {
 }
 
 export function Header({ title, onMenuToggle }: HeaderProps) {
+  const { user, logout } = useAuth();
   const [searchFocused, setSearchFocused] = useState(false);
   const [notifications] = useState([
     { id: 1, title: 'New lead captured', message: 'React Developer from Bangalore', time: '2 min ago', unread: true },
@@ -26,6 +28,18 @@ export function Header({ title, onMenuToggle }: HeaderProps) {
   ]);
 
   const unreadCount = notifications.filter(n => n.unread).length;
+
+  // Get user initials
+  const getUserInitials = () => {
+    if (user?.name) {
+      return user.name
+        .split(' ')
+        .map(n => n[0])
+        .join('')
+        .toUpperCase();
+    }
+    return user?.email?.charAt(0).toUpperCase() || 'U';
+  };
 
   return (
     <header className="h-16 bg-[#1a1a1a]/80 backdrop-blur-md border-b border-white/6 flex items-center justify-between px-6 sticky top-0 z-40">
@@ -107,17 +121,26 @@ export function Header({ title, onMenuToggle }: HeaderProps) {
         <DropdownMenu>
           <DropdownMenuTrigger asChild>
             <Button variant="ghost" className="relative h-9 w-9 rounded-full gradient-primary">
-              <span className="font-semibold text-sm">AD</span>
+              <span className="font-semibold text-sm">{getUserInitials()}</span>
             </Button>
           </DropdownMenuTrigger>
           <DropdownMenuContent align="end" className="w-56 bg-[#1a1a1a] border-white/10">
-            <DropdownMenuLabel>My Account</DropdownMenuLabel>
+            <DropdownMenuLabel>
+              <div className="flex flex-col">
+                <span className="font-semibold">{user?.name || 'User'}</span>
+                <span className="text-xs text-zinc-400">{user?.email}</span>
+              </div>
+            </DropdownMenuLabel>
             <DropdownMenuSeparator className="bg-white/10" />
             <DropdownMenuItem className="cursor-pointer hover:bg-white/5">Profile</DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer hover:bg-white/5">Settings</DropdownMenuItem>
             <DropdownMenuItem className="cursor-pointer hover:bg-white/5">API Keys</DropdownMenuItem>
             <DropdownMenuSeparator className="bg-white/10" />
-            <DropdownMenuItem className="cursor-pointer hover:bg-white/5 text-red-400">
+            <DropdownMenuItem 
+              onClick={logout}
+              className="cursor-pointer hover:bg-white/5 text-red-400 flex items-center gap-2"
+            >
+              <LogOut className="w-4 h-4" />
               Log out
             </DropdownMenuItem>
           </DropdownMenuContent>

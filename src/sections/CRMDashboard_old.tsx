@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react';
+import { useState } from 'react';
 import { 
   BarChart3, 
   Briefcase, 
@@ -11,8 +11,7 @@ import {
   ArrowDownRight,
   Calendar,
   Key,
-  Settings,
-  Loader
+  Settings
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Badge } from '@/components/ui/badge';
@@ -32,10 +31,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { jobService, leadService, recruiterService, dealService, paymentService } from '@/services';
-import { toast } from 'sonner';
 
-// Mock data for charts (will be enhanced with real data later)
 const revenueData = [
   { name: 'Jan', revenue: 420000, leads: 320 },
   { name: 'Feb', revenue: 580000, leads: 450 },
@@ -44,6 +40,13 @@ const revenueData = [
   { name: 'May', revenue: 1100000, leads: 890 },
   { name: 'Jun', revenue: 1350000, leads: 1100 },
   { name: 'Jul', revenue: 1580000, leads: 1320 },
+];
+
+const conversionData = [
+  { name: 'Leads', value: 3420 },
+  { name: 'Qualified', value: 1850 },
+  { name: 'Sent', value: 980 },
+  { name: 'Closed', value: 420 },
 ];
 
 const sourceData = [
@@ -55,21 +58,15 @@ const sourceData = [
 
 export function CRMDashboard() {
   const [activeTab, setActiveTab] = useState('overview');
-  const [isLoading, setIsLoading] = useState(true);
-  const [stats, setStats] = useState({
-    totalJobs: 0,
-    totalLeads: 0,
-    totalRecruiters: 0,
-    totalDeals: 0,
-    totalRevenue: 0,
-    conversionRate: 0,
-  });
-  const [conversionData, setConversionData] = useState([
-    { name: 'Leads', value: 0 },
-    { name: 'Qualified', value: 0 },
-    { name: 'Sent', value: 0 },
-    { name: 'Closed', value: 0 },
-  ]);
+
+  const stats = {
+    totalJobs: 12847,
+    totalLeads: 8432,
+    totalRecruiters: 156,
+    totalDeals: 420,
+    totalRevenue: 1580000,
+    conversionRate: 34.2,
+  };
 
   const recentActivity = [
     { id: 1, type: 'lead', message: 'New lead captured: Rahul Sharma', time: '2 min ago', icon: Users },
@@ -84,69 +81,6 @@ export function CRMDashboard() {
     { id: 2, name: 'Test API', key: 'pk_test_...a1b2c', status: 'active', lastUsed: '1 hour ago' },
     { id: 3, name: 'Webhook Secret', key: 'whsec_...d3e4f', status: 'active', lastUsed: '5 min ago' },
   ];
-
-  // Fetch dashboard data on component mount
-  useEffect(() => {
-    const fetchDashboardData = async () => {
-      setIsLoading(true);
-      try {
-        // Fetch all statistics in parallel
-        const [jobsRes, leadsRes, recruitersRes, dealsRes, paymentsRes] = await Promise.allSettled([
-          jobService.getAllJobs({ page: 1, pageSize: 1 }),
-          leadService.getAllLeads({ page: 1, pageSize: 1 }),
-          recruiterService.getAllRecruiters({ page: 1, pageSize: 1 }),
-          dealService.getAllDeals({ page: 1, pageSize: 1 }),
-          paymentService.getAllPayments({ page: 1, pageSize: 1 }),
-        ]);
-
-        // Extract totals from responses
-        const totalJobs = jobsRes.status === 'fulfilled' ? jobsRes.value.total || 0 : 0;
-        const totalLeads = leadsRes.status === 'fulfilled' ? leadsRes.value.total || 0 : 0;
-        const totalRecruiters = recruitersRes.status === 'fulfilled' ? recruitersRes.value.total || 0 : 0;
-        const totalDeals = dealsRes.status === 'fulfilled' ? dealsRes.value.total || 0 : 0;
-        const totalPayments = paymentsRes.status === 'fulfilled' ? paymentsRes.value.total || 0 : 0;
-
-        // Calculate stats
-        const totalRevenue = totalPayments * 10000; // Estimated from count
-        const conversionRate = totalLeads > 0 ? ((totalDeals / totalLeads) * 100).toFixed(1) : 0;
-
-        setStats({
-          totalJobs,
-          totalLeads,
-          totalRecruiters,
-          totalDeals,
-          totalRevenue,
-          conversionRate: parseFloat(conversionRate as string),
-        });
-
-        // Update conversion funnel data
-        setConversionData([
-          { name: 'Leads', value: totalLeads },
-          { name: 'Qualified', value: Math.floor(totalLeads * 0.54) },
-          { name: 'Sent', value: Math.floor(totalLeads * 0.29) },
-          { name: 'Closed', value: totalDeals },
-        ]);
-      } catch (error) {
-        console.error('Error fetching dashboard data:', error);
-        toast.error('Failed to load dashboard data');
-      } finally {
-        setIsLoading(false);
-      }
-    };
-
-    fetchDashboardData();
-  }, []);
-
-  if (isLoading) {
-    return (
-      <div className="flex items-center justify-center min-h-screen">
-        <div className="text-center">
-          <Loader className="w-8 h-8 animate-spin mx-auto mb-2" />
-          <p>Loading dashboard...</p>
-        </div>
-      </div>
-    );
-  }
 
   return (
     <div className="space-y-6">
@@ -262,23 +196,24 @@ export function CRMDashboard() {
             </Card>
           </div>
 
-          {/* Source Distribution */}
+          {/* Source Distribution & Recent Activity */}
           <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-            <Card className="bg-[#1a1a1a] border-white/6 lg:col-span-1">
+            {/* Source Distribution */}
+            <Card className="bg-[#1a1a1a] border-white/6">
               <CardHeader>
                 <CardTitle className="text-lg">Lead Sources</CardTitle>
               </CardHeader>
               <CardContent>
-                <div className="h-64">
+                <div className="h-48">
                   <ResponsiveContainer width="100%" height="100%">
                     <PieChart>
                       <Pie
                         data={sourceData}
                         cx="50%"
                         cy="50%"
-                        innerRadius={60}
-                        outerRadius={100}
-                        paddingAngle={2}
+                        innerRadius={50}
+                        outerRadius={80}
+                        paddingAngle={5}
                         dataKey="value"
                       >
                         {sourceData.map((entry, index) => (
@@ -289,11 +224,11 @@ export function CRMDashboard() {
                     </PieChart>
                   </ResponsiveContainer>
                 </div>
-                <div className="space-y-2 mt-4">
-                  {sourceData.map(source => (
-                    <div key={source.name} className="flex justify-between text-xs">
-                      <span className="text-zinc-400">{source.name}</span>
-                      <span className="font-semibold">{source.value}%</span>
+                <div className="flex flex-wrap gap-2 mt-4">
+                  {sourceData.map((item) => (
+                    <div key={item.name} className="flex items-center gap-1">
+                      <div className="w-3 h-3 rounded-full" style={{ backgroundColor: item.color }} />
+                      <span className="text-xs text-zinc-400">{item.name}</span>
                     </div>
                   ))}
                 </div>
@@ -301,48 +236,58 @@ export function CRMDashboard() {
             </Card>
 
             {/* Recent Activity */}
-            <Card className="bg-[#1a1a1a] border-white/6 lg:col-span-2">
-              <CardHeader>
+            <Card className="lg:col-span-2 bg-[#1a1a1a] border-white/6">
+              <CardHeader className="flex flex-row items-center justify-between">
                 <CardTitle className="text-lg">Recent Activity</CardTitle>
+                <Button variant="outline" size="sm" className="border-white/10">
+                  <Calendar className="w-4 h-4 mr-2" />
+                  View All
+                </Button>
               </CardHeader>
-              <CardContent className="space-y-3">
-                {recentActivity.map(activity => {
-                  const Icon = activity.icon;
-                  return (
-                    <div key={activity.id} className="flex items-start gap-3 pb-3 border-b border-white/6 last:border-0">
-                      <Icon className="w-4 h-4 text-violet-400 mt-1 flex-shrink-0" />
-                      <div className="flex-1">
-                        <p className="text-sm text-white">{activity.message}</p>
-                        <p className="text-xs text-zinc-500 mt-1">{activity.time}</p>
+              <CardContent>
+                <div className="space-y-3">
+                  {recentActivity.map((activity) => {
+                    const Icon = activity.icon;
+                    return (
+                      <div key={activity.id} className="flex items-center gap-3 p-3 rounded-lg bg-black/30">
+                        <div className="w-10 h-10 rounded-lg bg-violet-600/20 flex items-center justify-center">
+                          <Icon className="w-5 h-5 text-violet-400" />
+                        </div>
+                        <div className="flex-1">
+                          <p className="text-sm">{activity.message}</p>
+                          <p className="text-xs text-zinc-500">{activity.time}</p>
+                        </div>
                       </div>
-                    </div>
-                  );
-                })}
+                    );
+                  })}
+                </div>
               </CardContent>
             </Card>
           </div>
         </TabsContent>
 
-        <TabsContent value="analytics" className="mt-4 space-y-6">
+        <TabsContent value="analytics" className="mt-4">
           <Card className="bg-[#1a1a1a] border-white/6">
             <CardHeader>
-              <CardTitle>Analytics Dashboard</CardTitle>
+              <CardTitle className="text-lg">Detailed Analytics</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-                <div>
-                  <h3 className="font-semibold mb-4">Key Metrics</h3>
-                  <div className="space-y-3">
-                    <div className="flex justify-between">
-                      <span className="text-zinc-400">Avg Deal Value</span>
-                      <span className="font-semibold">₹{(stats.totalRevenue / Math.max(stats.totalDeals, 1)).toLocaleString()}</span>
-                    </div>
-                    <div className="flex justify-between">
-                      <span className="text-zinc-400">Leads/Recruiter</span>
-                      <span className="font-semibold">{(stats.totalLeads / Math.max(stats.totalRecruiters, 1)).toFixed(1)}</span>
+              <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
+                {[
+                  { label: 'Avg Deal Value', value: '₹50,800', change: '+12%', positive: true },
+                  { label: 'Lead Response Time', value: '2.3 hrs', change: '-15%', positive: true },
+                  { label: 'Recruiter Retention', value: '87%', change: '+5%', positive: true },
+                  { label: 'Cost per Lead', value: '₹450', change: '-8%', positive: true },
+                ].map((metric, i) => (
+                  <div key={i} className="p-4 rounded-lg bg-black/30">
+                    <p className="text-sm text-zinc-500">{metric.label}</p>
+                    <p className="text-2xl font-bold mt-1">{metric.value}</p>
+                    <div className={`flex items-center gap-1 mt-2 text-sm ${metric.positive ? 'text-emerald-400' : 'text-red-400'}`}>
+                      {metric.positive ? <ArrowUpRight className="w-4 h-4" /> : <ArrowDownRight className="w-4 h-4" />}
+                      <span>{metric.change}</span>
                     </div>
                   </div>
-                </div>
+                ))}
               </div>
             </CardContent>
           </Card>
@@ -351,14 +296,18 @@ export function CRMDashboard() {
         <TabsContent value="activity" className="mt-4">
           <Card className="bg-[#1a1a1a] border-white/6">
             <CardHeader>
-              <CardTitle>Activity Log</CardTitle>
+              <CardTitle className="text-lg">Activity Log</CardTitle>
             </CardHeader>
             <CardContent>
-              <div className="space-y-2">
-                {recentActivity.map(activity => (
-                  <div key={activity.id} className="text-sm text-zinc-400 flex justify-between">
-                    <span>{activity.message}</span>
-                    <span className="text-zinc-500">{activity.time}</span>
+              <div className="space-y-4">
+                {Array.from({ length: 10 }).map((_, i) => (
+                  <div key={i} className="flex items-center gap-4 p-3 rounded-lg bg-black/30">
+                    <div className="w-2 h-2 rounded-full bg-violet-500" />
+                    <div className="flex-1">
+                      <p className="text-sm">System automated lead distribution to TCS</p>
+                      <p className="text-xs text-zinc-500">{i + 1} hours ago</p>
+                    </div>
+                    <Badge className="bg-violet-600/20 text-violet-400">Auto</Badge>
                   </div>
                 ))}
               </div>
@@ -369,23 +318,27 @@ export function CRMDashboard() {
         <TabsContent value="api" className="mt-4">
           <Card className="bg-[#1a1a1a] border-white/6">
             <CardHeader className="flex flex-row items-center justify-between">
-              <CardTitle>API Keys</CardTitle>
-              <Button className="bg-violet-600 hover:bg-violet-700 text-white text-sm">
-                + Generate Key
+              <CardTitle className="text-lg">API Keys</CardTitle>
+              <Button className="gradient-primary">
+                <Key className="w-4 h-4 mr-2" />
+                Generate New Key
               </Button>
             </CardHeader>
             <CardContent>
               <div className="space-y-3">
-                {apiKeys.map(apiKey => (
-                  <div key={apiKey.id} className="flex items-center justify-between p-3 bg-white/5 rounded-lg border border-white/10">
+                {apiKeys.map((api) => (
+                  <div key={api.id} className="flex items-center justify-between p-4 rounded-lg bg-black/30">
                     <div>
-                      <p className="text-sm font-semibold">{apiKey.name}</p>
-                      <p className="text-xs text-zinc-500 mt-1">{apiKey.key}</p>
-                      <p className="text-xs text-zinc-600 mt-1">Last used: {apiKey.lastUsed}</p>
+                      <p className="font-medium">{api.name}</p>
+                      <p className="text-sm text-zinc-500 font-mono">{api.key}</p>
+                      <p className="text-xs text-zinc-600">Last used: {api.lastUsed}</p>
                     </div>
-                    <Badge className={apiKey.status === 'active' ? 'bg-emerald-600/20 text-emerald-400' : 'bg-red-600/20 text-red-400'}>
-                      {apiKey.status}
-                    </Badge>
+                    <div className="flex items-center gap-3">
+                      <Badge className="bg-emerald-600/20 text-emerald-400">{api.status}</Badge>
+                      <Button variant="ghost" size="icon" className="text-zinc-400 hover:text-white">
+                        <Settings className="w-4 h-4" />
+                      </Button>
+                    </div>
                   </div>
                 ))}
               </div>
