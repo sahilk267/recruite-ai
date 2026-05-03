@@ -193,9 +193,9 @@ export function LoginModal() {
               <p className="text-xs text-blue-300">
                 <strong>Demo Credentials:</strong>
                 <br />
-                Email: demo@recruite.ai
+                Email: admin@recruiteai.com
                 <br />
-                Password: Demo123456
+                Password: admin123
               </p>
             </div>
           </div>

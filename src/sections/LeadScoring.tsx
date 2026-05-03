@@ -45,7 +45,7 @@ export function LeadScoring() {
   const fetchLeads = async () => {
     setIsLoading(true);
     try {
-      const response = await leadService.getAllLeads({ page: 1, pageSize: 10 });
+      const response = await leadService.getAllLeads(1, 10);
       const leadsData = response.data || [];
       setLeads(leadsData.map((lead: any) => ({
         ...lead,

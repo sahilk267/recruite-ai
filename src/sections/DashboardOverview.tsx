@@ -144,6 +144,34 @@ const automationModules = [
 export function DashboardOverview() {
   const chartRef = useRef(null);
   const isChartInView = useInView(chartRef, { once: true });
+  const [stats, setStats] = useState<{
+    total_jobs: number;
+    total_leads: number;
+    total_revenue: number;
+    total_recruiters: number;
+    avg_score: number;
+    high_quality_leads: number;
+    active_jobs: number;
+  } | null>(null);
+
+  useEffect(() => {
+    const fetchStats = async () => {
+      try {
+        const { default: apiClient } = await import('@/services/api');
+        const res = await apiClient.get('/api/stats');
+        setStats(res.data);
+      } catch {
+        // fallback to static if backend unavailable
+      }
+    };
+    fetchStats();
+  }, []);
+
+  const formatRevenue = (v: number) => {
+    if (v >= 100000) return `₹${(v / 100000).toFixed(1)}L`;
+    if (v >= 1000) return `₹${(v / 1000).toFixed(0)}K`;
+    return `₹${v}`;
+  };
 
   return (
     <div className="space-y-6">
@@ -151,7 +179,7 @@ export function DashboardOverview() {
       <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-4 gap-4">
         <StatCard
           title="Total Jobs"
-          value="12,847"
+          value={stats ? stats.total_jobs.toLocaleString() : '—'}
           change={12}
           icon={Briefcase}
           color="bg-violet-600"
@@ -159,7 +187,7 @@ export function DashboardOverview() {
         />
         <StatCard
           title="Active Leads"
-          value="3,429"
+          value={stats ? stats.total_leads.toLocaleString() : '—'}
           change={8}
           icon={Users}
           color="bg-cyan-600"
@@ -167,15 +195,15 @@ export function DashboardOverview() {
         />
         <StatCard
           title="Revenue"
-          value="₹24.8L"
+          value={stats ? formatRevenue(stats.total_revenue) : '—'}
           change={23}
           icon={IndianRupee}
           color="bg-emerald-600"
           delay={2}
         />
         <StatCard
-          title="Conversion Rate"
-          value="34.2%"
+          title="Recruiters"
+          value={stats ? stats.total_recruiters.toLocaleString() : '—'}
           change={5}
           icon={TrendingUp}
           color="bg-amber-600"

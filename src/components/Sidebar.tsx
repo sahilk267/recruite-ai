@@ -22,8 +22,10 @@ import {
   Sparkles,
   Mail,
   FileText,
-  Layout, // Added Layout icon
-  UserCheck // Added UserCheck icon
+  Layout,
+  UserCheck,
+  ScanText,
+  ListChecks
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -36,6 +38,8 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'resume-screener', label: 'Resume Screener', icon: ScanText, badge: 'AI' },
+  { id: 'candidate-matching', label: 'Candidate Match', icon: ListChecks, badge: 'AI' },
   { id: 'traffic', label: 'Traffic Engine', icon: Megaphone },
   { id: 'jobs', label: 'Job Intelligence', icon: Search },
   { id: 'ai-processing', label: 'AI Processing', icon: Brain },
@@ -117,7 +121,16 @@ export function Sidebar({ activeSection, onSectionChange, isOpen, onToggle }: Si
                 title={!isOpen ? item.label : undefined}
               >
                 <Icon className={cn("w-5 h-5 flex-shrink-0", isActive && "text-violet-400")} />
-                {isOpen && <span className="truncate">{item.label}</span>}
+                {isOpen && (
+                  <>
+                    <span className="truncate flex-1 text-left">{item.label}</span>
+                    {'badge' in item && item.badge && (
+                      <span className="text-[10px] font-bold px-1.5 py-0.5 rounded bg-violet-600/30 text-violet-300 flex-shrink-0">
+                        {item.badge}
+                      </span>
+                    )}
+                  </>
+                )}
               </button>
             );
           })}

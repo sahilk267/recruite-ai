@@ -27,6 +27,8 @@ import { LeadForms } from './sections/LeadForms';
 import { LeadManagement } from './sections/LeadManagement';
 import FollowUpManagement from './sections/FollowUpManagement';
 import SequenceBuilder from './sections/SequenceBuilder';
+import { ResumeScreener } from './sections/ResumeScreener';
+import { CandidateMatching } from './sections/CandidateMatching';
 
 type Section =
   | 'dashboard'
@@ -52,7 +54,9 @@ type Section =
   | 'forms'
   | 'leads'
   | 'followups'
-  | 'sequences';
+  | 'sequences'
+  | 'resume-screener'
+  | 'candidate-matching';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -126,6 +130,10 @@ function App() {
         return <FollowUpManagement />;
       case 'sequences':
         return <SequenceBuilder />;
+      case 'resume-screener':
+        return <ResumeScreener />;
+      case 'candidate-matching':
+        return <CandidateMatching />;
       default:
         return <DashboardOverview />;
     }
@@ -156,7 +164,9 @@ function App() {
       forms: 'Lead Capture Forms',
       leads: 'Lead Management',
       followups: 'Follow-up Management',
-      sequences: 'Sequence Builder'
+      sequences: 'Sequence Builder',
+      'resume-screener': 'AI Resume Screener',
+      'candidate-matching': 'AI Candidate Matching',
     };
     return titles[activeSection] || 'Dashboard';
   };
