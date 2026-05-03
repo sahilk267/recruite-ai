@@ -1431,6 +1431,17 @@ def send_outreach_draft(draft_id: str,
     return {"message": "Draft marked as sent", "sent_at": serialize_datetime(draft.sent_at)}
 
 
+@app.post("/api/outreach/drafts/send-all")
+def send_all_outreach_drafts(db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    drafts = db.query(OutreachDraftModel).filter(OutreachDraftModel.status == "draft").all()
+    now = datetime.now(timezone.utc)
+    for draft in drafts:
+        draft.status = "sent"
+        draft.sent_at = now
+    db.commit()
+    return {"message": "All pending drafts marked as sent", "sent_count": len(drafts), "sent_at": serialize_datetime(now)}
+
+
 @app.delete("/api/outreach/drafts/{draft_id}")
 def delete_outreach_draft(draft_id: str,
                           db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):

@@ -87,6 +87,7 @@ export function OutreachAutomation() {
   const [editingDraft, setEditingDraft] = useState<{ id: string; subject: string; body: string } | null>(null);
   const [filterStatus, setFilterStatus] = useState<string>('all');
   const [isSending, setIsSending] = useState<string | null>(null);
+  const [isSendingAll, setIsSendingAll] = useState(false);
 
   // Templates tab state
   const [tierTemplates, setTierTemplates] = useState<TierTemplate[]>([]);
@@ -172,6 +173,25 @@ export function OutreachAutomation() {
       setDrafts(prev => prev.filter(d => d.id !== draftId));
       toast.success('Draft deleted');
     } catch { toast.error('Failed to delete draft'); }
+  };
+
+  const sendAllDrafts = async () => {
+    const pendingCount = drafts.filter(d => d.status === 'draft').length;
+    if (!pendingCount) {
+      toast.error('No pending drafts to send');
+      return;
+    }
+    setIsSendingAll(true);
+    try {
+      const res = await apiClient.post('/api/outreach/drafts/send-all');
+      const sentAt = res.data.sent_at || new Date().toISOString();
+      setDrafts(prev => prev.map(d => d.status === 'draft' ? { ...d, status: 'sent', sent_at: sentAt } : d));
+      toast.success(`Sent ${res.data.sent_count || pendingCount} drafts`);
+    } catch {
+      toast.error('Failed to send all drafts');
+    } finally {
+      setIsSendingAll(false);
+    }
   };
 
   const saveDraftEdit = async () => {
@@ -501,6 +521,15 @@ export function OutreachAutomation() {
                 className="text-zinc-500 hover:text-white h-7 px-2 gap-1.5 text-xs">
                 <RefreshCw className={`w-3.5 h-3.5 ${isLoadingDrafts ? 'animate-spin' : ''}`} />
                 Refresh
+              </Button>
+              <Button
+                size="sm"
+                onClick={sendAllDrafts}
+                disabled={isSendingAll || draftStats.draft === 0}
+                className="text-xs gradient-primary hover:opacity-90 h-7 px-3 gap-1.5"
+              >
+                {isSendingAll ? <RefreshCw className="w-3.5 h-3.5 animate-spin" /> : <Send className="w-3.5 h-3.5" />}
+                Send All
               </Button>
             </div>
 
