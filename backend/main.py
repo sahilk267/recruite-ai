@@ -152,6 +152,39 @@ class TemplateModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class TierTemplateModel(Base):
+    """Customizable email templates per candidate score tier (high/medium/low)."""
+    __tablename__ = "tier_templates"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    tier = Column(String, unique=True, nullable=False)   # "high" | "medium" | "low"
+    label = Column(String, nullable=False)               # "High Match (75+)"
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    tone = Column(String, default="professional")        # urgent | professional | exploratory
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
+                        onupdate=lambda: datetime.now(timezone.utc))
+
+
+class OutreachDraftModel(Base):
+    """Auto-generated personalized email drafts for candidates."""
+    __tablename__ = "outreach_drafts"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=False)
+    recruiter_id = Column(String, ForeignKey("recruiters.id"), nullable=True)
+    tier = Column(String, nullable=False)                # high | medium | low
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    status = Column(String, default="draft")             # draft | sent | archived
+    lead_name = Column(String, default="")               # denormalised for quick display
+    lead_email = Column(String, default="")
+    lead_score = Column(Integer, default=0)
+    lead_skills_snapshot = Column(JSON, default=list)
+    recruiter_name = Column(String, default="")
+    recruiter_company = Column(String, default="")
+    sent_at = Column(DateTime, nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 # ─── Create Tables ─────────────────────────────────────────────────────────────
 
 Base.metadata.create_all(bind=engine)
@@ -508,6 +541,22 @@ class ResumeMatchRequest(BaseModel):
     job_description: str
     job_skills: List[str] = []
     job_experience_min: int = 0
+
+
+class AutoDraftRequest(BaseModel):
+    lead_ids: List[str]
+    recruiter_id: Optional[str] = None
+
+
+class DraftUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+
+
+class TierTemplateUpdate(BaseModel):
+    subject: Optional[str] = None
+    body: Optional[str] = None
+    tone: Optional[str] = None
 
 
 # ─── FastAPI App ──────────────────────────────────────────────────────────────
@@ -1211,6 +1260,188 @@ def get_outreach_history(recruiter_id: str, _: UserModel = Depends(get_current_u
     return {"data": [], "total": 0}
 
 
+# ─── Automated Outreach System ────────────────────────────────────────────────
+
+def _score_tier(score: int) -> str:
+    if score >= 75:
+        return "high"
+    if score >= 50:
+        return "medium"
+    return "low"
+
+
+def _render_template(template_body: str, template_subject: str, lead: LeadModel,
+                     recruiter: Optional[RecruiterModel] = None) -> tuple[str, str]:
+    """Replace all {{variables}} in the template with lead/recruiter data."""
+    skills_str = ", ".join((lead.skills or [])[:5]) if lead.skills else "various technical skills"
+    exp_str = f"{lead.experience} year{'s' if lead.experience != 1 else ''}" if lead.experience > 0 else "entry-level"
+    recruiter_name = recruiter.recruiter_name if recruiter else "Hiring Manager"
+    company = recruiter.company_name if recruiter else "your company"
+
+    replacements = {
+        "{{candidate_name}}": lead.name,
+        "{{skills}}":         skills_str,
+        "{{experience}}":     exp_str,
+        "{{score}}":          str(lead.score),
+        "{{quality}}":        lead.quality or "qualified",
+        "{{recruiter_name}}": recruiter_name,
+        "{{company}}":        company,
+    }
+
+    body = template_body
+    subject = template_subject
+    for key, val in replacements.items():
+        body = body.replace(key, val)
+        subject = subject.replace(key, val)
+    return subject, body
+
+
+@app.get("/api/outreach/tier-templates")
+def get_tier_templates(db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    templates = db.query(TierTemplateModel).all()
+    return {
+        "data": [
+            {
+                "id": t.id, "tier": t.tier, "label": t.label,
+                "subject": t.subject, "body": t.body, "tone": t.tone,
+            }
+            for t in templates
+        ]
+    }
+
+
+@app.patch("/api/outreach/tier-templates/{tier}")
+def update_tier_template(tier: str, payload: TierTemplateUpdate,
+                         db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    tpl = db.query(TierTemplateModel).filter(TierTemplateModel.tier == tier).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Tier template not found")
+    if payload.subject is not None:
+        tpl.subject = payload.subject
+    if payload.body is not None:
+        tpl.body = payload.body
+    if payload.tone is not None:
+        tpl.tone = payload.tone
+    tpl.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    db.refresh(tpl)
+    return {"data": {"id": tpl.id, "tier": tpl.tier, "label": tpl.label,
+                     "subject": tpl.subject, "body": tpl.body, "tone": tpl.tone}}
+
+
+@app.post("/api/outreach/auto-draft")
+def auto_draft_emails(payload: AutoDraftRequest,
+                      db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    if not payload.lead_ids:
+        raise HTTPException(status_code=400, detail="No lead IDs provided")
+
+    recruiter = None
+    if payload.recruiter_id:
+        recruiter = db.query(RecruiterModel).filter(RecruiterModel.id == payload.recruiter_id).first()
+
+    # Load all tier templates into a dict keyed by tier
+    tier_templates: dict[str, TierTemplateModel] = {
+        t.tier: t for t in db.query(TierTemplateModel).all()
+    }
+
+    generated = 0
+    skipped = 0
+    for lead_id in payload.lead_ids:
+        lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+        if not lead:
+            skipped += 1
+            continue
+
+        tier = _score_tier(lead.score)
+        tpl = tier_templates.get(tier)
+        if not tpl:
+            skipped += 1
+            continue
+
+        subject, body = _render_template(tpl.body, tpl.subject, lead, recruiter)
+
+        draft = OutreachDraftModel(
+            lead_id=lead.id,
+            recruiter_id=recruiter.id if recruiter else None,
+            tier=tier,
+            subject=subject,
+            body=body,
+            status="draft",
+            lead_name=lead.name,
+            lead_email=lead.email or "",
+            lead_score=lead.score,
+            lead_skills_snapshot=lead.skills or [],
+            recruiter_name=recruiter.recruiter_name if recruiter else "",
+            recruiter_company=recruiter.company_name if recruiter else "",
+        )
+        db.add(draft)
+        generated += 1
+
+    db.commit()
+    return {"generated": generated, "skipped": skipped}
+
+
+@app.get("/api/outreach/drafts")
+def get_outreach_drafts(status: Optional[str] = None,
+                        db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    q = db.query(OutreachDraftModel)
+    if status:
+        q = q.filter(OutreachDraftModel.status == status)
+    drafts = q.order_by(OutreachDraftModel.created_at.desc()).all()
+    return {
+        "data": [
+            {
+                "id": d.id, "lead_id": d.lead_id, "recruiter_id": d.recruiter_id,
+                "tier": d.tier, "subject": d.subject, "body": d.body, "status": d.status,
+                "lead_name": d.lead_name, "lead_email": d.lead_email, "lead_score": d.lead_score,
+                "lead_skills_snapshot": d.lead_skills_snapshot or [],
+                "recruiter_name": d.recruiter_name, "recruiter_company": d.recruiter_company,
+                "sent_at": serialize_datetime(d.sent_at),
+                "created_at": serialize_datetime(d.created_at),
+            }
+            for d in drafts
+        ],
+        "total": len(drafts),
+    }
+
+
+@app.patch("/api/outreach/drafts/{draft_id}")
+def update_outreach_draft(draft_id: str, payload: DraftUpdate,
+                          db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    draft = db.query(OutreachDraftModel).filter(OutreachDraftModel.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    if payload.subject is not None:
+        draft.subject = payload.subject
+    if payload.body is not None:
+        draft.body = payload.body
+    db.commit()
+    return {"message": "Draft updated"}
+
+
+@app.post("/api/outreach/drafts/{draft_id}/send")
+def send_outreach_draft(draft_id: str,
+                        db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    draft = db.query(OutreachDraftModel).filter(OutreachDraftModel.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    draft.status = "sent"
+    draft.sent_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"message": "Draft marked as sent", "sent_at": serialize_datetime(draft.sent_at)}
+
+
+@app.delete("/api/outreach/drafts/{draft_id}")
+def delete_outreach_draft(draft_id: str,
+                          db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    draft = db.query(OutreachDraftModel).filter(OutreachDraftModel.id == draft_id).first()
+    if not draft:
+        raise HTTPException(status_code=404, detail="Draft not found")
+    db.delete(draft)
+    db.commit()
+    return {"message": "Draft deleted"}
+
+
 # ─── Seed Data ────────────────────────────────────────────────────────────────
 
 def seed_database():
@@ -1366,6 +1597,75 @@ def seed_database():
         for td in templates_data:
             t = TemplateModel(**td)
             db.add(t)
+
+        # ── Tier Templates ────────────────────────────────────────────────────
+        tier_templates_data = [
+            {
+                "tier": "high",
+                "label": "High Match (75+ pts)",
+                "tone": "urgent",
+                "subject": "🔥 Exceptional Candidate Available — {{candidate_name}} (Score {{score}})",
+                "body": (
+                    "Hi {{recruiter_name}},\n\n"
+                    "I wanted to reach out immediately about {{candidate_name}}, one of our top-ranked candidates "
+                    "with an AI match score of {{score}}/100 — placing them in our elite High Match tier.\n\n"
+                    "Here's what makes them stand out:\n"
+                    "• Skills: {{skills}}\n"
+                    "• Experience: {{experience}} of hands-on industry experience\n"
+                    "• AI Assessment: {{quality}}-quality profile\n\n"
+                    "Candidates at this score level are in high demand and typically receive multiple offers within "
+                    "1–2 weeks of being listed. I'd strongly recommend connecting as soon as possible.\n\n"
+                    "Would a quick 15-minute call work for you today or tomorrow? I can share their full profile "
+                    "and answer any questions you have.\n\n"
+                    "Best regards,\n"
+                    "RecruitAI Talent Team"
+                ),
+            },
+            {
+                "tier": "medium",
+                "label": "Medium Match (50–74 pts)",
+                "tone": "professional",
+                "subject": "Qualified Candidate Profile — {{candidate_name}} | AI Score {{score}}",
+                "body": (
+                    "Hi {{recruiter_name}},\n\n"
+                    "I hope you're doing well. I'm reaching out to share a solid candidate profile that may be "
+                    "a strong fit for {{company}}.\n\n"
+                    "Candidate: {{candidate_name}}\n"
+                    "AI Match Score: {{score}}/100 (Medium Match)\n"
+                    "Key Skills: {{skills}}\n"
+                    "Experience: {{experience}}\n\n"
+                    "{{candidate_name}} brings a well-rounded background and has been thoroughly pre-screened by "
+                    "our AI system. While there may be some areas for further assessment, their core profile aligns "
+                    "well with typical requirements we see in your sector.\n\n"
+                    "I'd be happy to share their complete resume and scoring breakdown if you'd like to review. "
+                    "Please let me know if this profile is of interest or if you'd prefer a different skill set.\n\n"
+                    "Best regards,\n"
+                    "RecruitAI Talent Team"
+                ),
+            },
+            {
+                "tier": "low",
+                "label": "Low Match (<50 pts)",
+                "tone": "exploratory",
+                "subject": "Available Candidate — {{candidate_name}} | For Your Review",
+                "body": (
+                    "Hi {{recruiter_name}},\n\n"
+                    "Quick note to share a candidate who may be worth a look depending on your current openings.\n\n"
+                    "{{candidate_name}} has a background in {{skills}} with {{experience}} of experience. "
+                    "Their AI match score is {{score}}/100, which suggests they may be at an earlier career stage "
+                    "or exploring a new direction.\n\n"
+                    "This profile could be a good fit for junior roles, apprenticeships, or positions where "
+                    "potential and growth are valued over immediate expertise.\n\n"
+                    "Let me know if you'd like their full profile or if I can help match you with higher-scoring "
+                    "candidates.\n\n"
+                    "Best,\n"
+                    "RecruitAI Talent Team"
+                ),
+            },
+        ]
+
+        for tt in tier_templates_data:
+            db.add(TierTemplateModel(**tt))
 
         db.commit()
         print("✅ Database seeded with demo data")

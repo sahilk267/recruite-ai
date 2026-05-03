@@ -29,6 +29,7 @@ import FollowUpManagement from './sections/FollowUpManagement';
 import SequenceBuilder from './sections/SequenceBuilder';
 import { ResumeScreener } from './sections/ResumeScreener';
 import { CandidateMatching } from './sections/CandidateMatching';
+import { OutreachAutomation } from './sections/OutreachAutomation';
 
 type Section =
   | 'dashboard'
@@ -56,7 +57,8 @@ type Section =
   | 'followups'
   | 'sequences'
   | 'resume-screener'
-  | 'candidate-matching';
+  | 'candidate-matching'
+  | 'outreach-automation';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -134,6 +136,8 @@ function App() {
         return <ResumeScreener />;
       case 'candidate-matching':
         return <CandidateMatching />;
+      case 'outreach-automation':
+        return <OutreachAutomation />;
       default:
         return <DashboardOverview />;
     }
@@ -167,6 +171,7 @@ function App() {
       sequences: 'Sequence Builder',
       'resume-screener': 'AI Resume Screener',
       'candidate-matching': 'AI Candidate Matching',
+      'outreach-automation': 'Automated Email Outreach',
     };
     return titles[activeSection] || 'Dashboard';
   };
