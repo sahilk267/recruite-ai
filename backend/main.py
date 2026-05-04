@@ -1453,6 +1453,74 @@ def delete_outreach_draft(draft_id: str,
     return {"message": "Draft deleted"}
 
 
+@app.get("/api/outreach/analytics")
+def get_outreach_analytics(db: Session = Depends(get_db), _: UserModel = Depends(get_current_user)):
+    all_drafts = db.query(OutreachDraftModel).all()
+    total = len(all_drafts)
+    sent_drafts = [d for d in all_drafts if d.status == "sent"]
+    pending_drafts = [d for d in all_drafts if d.status == "draft"]
+    sent = len(sent_drafts)
+    draft = len(pending_drafts)
+    send_rate = round((sent / total * 100), 1) if total > 0 else 0.0
+    avg_score_sent = round(sum(d.lead_score for d in sent_drafts) / sent, 1) if sent > 0 else 0.0
+
+    # Per-tier breakdown
+    tier_stats: dict = {}
+    for tier in ["high", "medium", "low"]:
+        tier_all = [d for d in all_drafts if d.tier == tier]
+        tier_sent = [d for d in tier_all if d.status == "sent"]
+        tier_draft = [d for d in tier_all if d.status == "draft"]
+        tier_stats[tier] = {
+            "total": len(tier_all),
+            "sent": len(tier_sent),
+            "draft": len(tier_draft),
+        }
+
+    # Timeline: sent emails per day (last 14 days)
+    from collections import defaultdict
+    day_counts: dict = defaultdict(int)
+    for d in sent_drafts:
+        if d.sent_at:
+            day = d.sent_at.strftime("%Y-%m-%d") if hasattr(d.sent_at, "strftime") else str(d.sent_at)[:10]
+            day_counts[day] += 1
+    # Build last 14 days
+    from datetime import timedelta, date
+    timeline = []
+    today = date.today()
+    for i in range(13, -1, -1):
+        day = (today - timedelta(days=i)).isoformat()
+        timeline.append({"date": day, "sent": day_counts.get(day, 0)})
+
+    # Recent sent (last 10)
+    recent_sent = sorted(sent_drafts, key=lambda d: d.sent_at or datetime.min, reverse=True)[:10]
+    recent = [
+        {
+            "id": d.id,
+            "lead_name": d.lead_name,
+            "lead_email": d.lead_email,
+            "lead_score": d.lead_score,
+            "tier": d.tier,
+            "subject": d.subject,
+            "recruiter_company": d.recruiter_company,
+            "sent_at": serialize_datetime(d.sent_at),
+        }
+        for d in recent_sent
+    ]
+
+    return {
+        "summary": {
+            "total": total,
+            "sent": sent,
+            "draft": draft,
+            "send_rate": send_rate,
+            "avg_score_sent": avg_score_sent,
+        },
+        "by_tier": tier_stats,
+        "timeline": timeline,
+        "recent_sent": recent,
+    }
+
+
 # ─── Seed Data ────────────────────────────────────────────────────────────────
 
 def seed_database():

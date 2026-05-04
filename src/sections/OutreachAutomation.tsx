@@ -1,15 +1,19 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Mail, Wand2, Send, Trash2, Edit3, CheckCircle, Clock,
-  Star, Layers, RefreshCw, Users, Filter, ChevronDown,
-  ChevronUp, Save, Eye, Zap, BarChart3, Settings,
-  ArrowUpRight, Archive, Copy, AlertCircle
+  Star, RefreshCw, Users, Filter, ChevronDown,
+  ChevronUp, Save, BarChart3, Settings,
+  AlertCircle, TrendingUp, Activity, Percent, Award
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
 import { Badge } from '@/components/ui/badge';
 import { motion, AnimatePresence } from 'framer-motion';
 import { toast } from 'sonner';
+import {
+  AreaChart, Area, BarChart, Bar, XAxis, YAxis,
+  CartesianGrid, Tooltip, ResponsiveContainer, Cell
+} from 'recharts';
 import apiClient from '@/services/api';
 
 // ─── Types ────────────────────────────────────────────────────────────────────
@@ -50,7 +54,33 @@ interface Lead {
   experience: number;
 }
 
-type Tab = 'generate' | 'drafts' | 'templates';
+interface AnalyticsData {
+  summary: {
+    total: number;
+    sent: number;
+    draft: number;
+    send_rate: number;
+    avg_score_sent: number;
+  };
+  by_tier: {
+    high: { total: number; sent: number; draft: number };
+    medium: { total: number; sent: number; draft: number };
+    low: { total: number; sent: number; draft: number };
+  };
+  timeline: { date: string; sent: number }[];
+  recent_sent: {
+    id: string;
+    lead_name: string;
+    lead_email: string;
+    lead_score: number;
+    tier: string;
+    subject: string;
+    recruiter_company: string;
+    sent_at: string;
+  }[];
+}
+
+type Tab = 'generate' | 'drafts' | 'templates' | 'analytics';
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -65,6 +95,32 @@ function scoreTier(score: number): 'high' | 'medium' | 'low' {
   if (score >= 50) return 'medium';
   return 'low';
 }
+
+function fmtDate(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleDateString('en-US', { month: 'short', day: 'numeric' });
+}
+
+function fmtTime(iso: string) {
+  const d = new Date(iso);
+  return d.toLocaleTimeString('en-US', { hour: '2-digit', minute: '2-digit' });
+}
+
+// ─── Custom Tooltip ───────────────────────────────────────────────────────────
+
+const ChartTooltip = ({ active, payload, label }: any) => {
+  if (!active || !payload?.length) return null;
+  return (
+    <div className="bg-[#1a1a1a] border border-white/10 rounded-lg px-3 py-2 text-xs shadow-xl">
+      <p className="text-zinc-400 mb-1">{label}</p>
+      {payload.map((p: any) => (
+        <p key={p.name} style={{ color: p.color }} className="font-semibold">
+          {p.name}: {p.value}
+        </p>
+      ))}
+    </div>
+  );
+};
 
 // ─── Main Component ───────────────────────────────────────────────────────────
 
@@ -93,6 +149,10 @@ export function OutreachAutomation() {
   const [tierTemplates, setTierTemplates] = useState<TierTemplate[]>([]);
   const [editingTemplate, setEditingTemplate] = useState<TierTemplate | null>(null);
   const [isSavingTemplate, setIsSavingTemplate] = useState(false);
+
+  // Analytics tab state
+  const [analytics, setAnalytics] = useState<AnalyticsData | null>(null);
+  const [isLoadingAnalytics, setIsLoadingAnalytics] = useState(false);
 
   // ─── Data Fetching ──────────────────────────────────────────────────────────
 
@@ -128,6 +188,15 @@ export function OutreachAutomation() {
     } catch {}
   }, []);
 
+  const fetchAnalytics = useCallback(async () => {
+    setIsLoadingAnalytics(true);
+    try {
+      const res = await apiClient.get('/api/outreach/analytics');
+      setAnalytics(res.data);
+    } catch { toast.error('Failed to load analytics'); }
+    finally { setIsLoadingAnalytics(false); }
+  }, []);
+
   useEffect(() => {
     fetchLeads();
     fetchRecruiters();
@@ -136,7 +205,8 @@ export function OutreachAutomation() {
 
   useEffect(() => {
     if (activeTab === 'drafts') fetchDrafts();
-  }, [activeTab, fetchDrafts]);
+    if (activeTab === 'analytics') fetchAnalytics();
+  }, [activeTab, fetchDrafts, fetchAnalytics]);
 
   // ─── Actions ────────────────────────────────────────────────────────────────
 
@@ -284,11 +354,12 @@ export function OutreachAutomation() {
       </div>
 
       {/* Tabs */}
-      <div className="flex gap-1 p-1 bg-zinc-900 rounded-xl w-fit">
+      <div className="flex gap-1 p-1 bg-zinc-900 rounded-xl w-fit flex-wrap">
         {([
-          { id: 'generate' as Tab, label: 'Generate Drafts', icon: Wand2 },
-          { id: 'drafts'   as Tab, label: 'Draft Queue',     icon: Mail, count: draftStats.draft },
+          { id: 'generate'  as Tab, label: 'Generate Drafts', icon: Wand2 },
+          { id: 'drafts'    as Tab, label: 'Draft Queue',     icon: Mail, count: draftStats.draft },
           { id: 'templates' as Tab, label: 'Tier Templates',  icon: Settings },
+          { id: 'analytics' as Tab, label: 'Analytics',       icon: BarChart3 },
         ] as const).map(tab => {
           const Icon = tab.icon;
           return (
@@ -328,7 +399,6 @@ export function OutreachAutomation() {
                       Select Candidates ({selectedLeadIds.size} selected)
                     </CardTitle>
                     <div className="flex items-center gap-2">
-                      {/* Tier filter */}
                       <div className="flex gap-1">
                         {['all', 'high', 'medium', 'low'].map(t => (
                           <button
@@ -355,7 +425,6 @@ export function OutreachAutomation() {
                   </div>
                 </CardHeader>
                 <CardContent className="p-0">
-                  {/* Select All header */}
                   <div className="px-4 py-2 border-b border-white/5 flex items-center gap-3">
                     <input type="checkbox" checked={allSelected} onChange={toggleAll}
                       className="w-4 h-4 rounded accent-violet-500 cursor-pointer" />
@@ -423,7 +492,6 @@ export function OutreachAutomation() {
                   </CardTitle>
                 </CardHeader>
                 <CardContent className="space-y-4">
-                  {/* Recruiter Target */}
                   <div className="space-y-1.5">
                     <label className="text-xs text-zinc-400 font-medium">Target Recruiter (optional)</label>
                     <select
@@ -438,7 +506,6 @@ export function OutreachAutomation() {
                     </select>
                   </div>
 
-                  {/* Tier preview */}
                   <div className="space-y-2">
                     <label className="text-xs text-zinc-400 font-medium">Email tone by tier</label>
                     {(['high', 'medium', 'low'] as const).map(t => {
@@ -476,7 +543,6 @@ export function OutreachAutomation() {
                 </CardContent>
               </Card>
 
-              {/* How it works */}
               <Card className="bg-[#1a1a1a] border-white/6">
                 <CardContent className="p-4 space-y-3">
                   <p className="text-xs font-medium text-zinc-400">How it works</p>
@@ -505,7 +571,6 @@ export function OutreachAutomation() {
           <motion.div key="drafts" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
             className="space-y-4">
 
-            {/* Filters + refresh */}
             <div className="flex items-center justify-between gap-3 flex-wrap">
               <div className="flex gap-1">
                 {['all', 'draft', 'sent'].map(s => (
@@ -569,9 +634,7 @@ export function OutreachAutomation() {
                         draft.status === 'sent' ? 'opacity-70' : ''
                       }`}>
                         <CardContent className="p-4">
-                          {/* Header row */}
                           <div className="flex items-start gap-3">
-                            {/* Tier color bar */}
                             <div className={`w-1 self-stretch rounded-full flex-shrink-0 ${
                               tier === 'high' ? 'bg-emerald-500' : tier === 'medium' ? 'bg-amber-500' : 'bg-red-500'
                             }`} />
@@ -604,7 +667,6 @@ export function OutreachAutomation() {
                               </p>
                               <p className="text-xs text-zinc-400 mt-1 font-medium truncate">Subject: {draft.subject}</p>
 
-                              {/* Skills */}
                               {draft.lead_skills_snapshot?.length > 0 && (
                                 <div className="flex flex-wrap gap-1 mt-1.5">
                                   {draft.lead_skills_snapshot.slice(0, 4).map((s, i) => (
@@ -615,7 +677,6 @@ export function OutreachAutomation() {
                             </div>
                           </div>
 
-                          {/* Expand / edit / actions */}
                           <div className="flex items-center gap-2 mt-3 pt-3 border-t border-white/5">
                             <button onClick={() => setExpandedDraft(isExpanded ? null : draft.id)}
                               className="flex items-center gap-1 text-xs text-zinc-500 hover:text-zinc-300 transition-colors">
@@ -648,7 +709,6 @@ export function OutreachAutomation() {
                             </Button>
                           </div>
 
-                          {/* Expanded preview / inline edit */}
                           <AnimatePresence>
                             {isExpanded && (
                               <motion.div initial={{ opacity: 0, height: 0 }} animate={{ opacity: 1, height: 'auto' }}
@@ -816,6 +876,296 @@ export function OutreachAutomation() {
                 </div>
               </CardContent>
             </Card>
+          </motion.div>
+        )}
+
+        {/* ── TAB: ANALYTICS ───────────────────────────────────────────────── */}
+        {activeTab === 'analytics' && (
+          <motion.div key="analytics" initial={{ opacity: 0, y: 8 }} animate={{ opacity: 1, y: 0 }} exit={{ opacity: 0, y: -8 }}
+            className="space-y-6">
+
+            {isLoadingAnalytics ? (
+              <Card className="bg-[#1a1a1a] border-white/6">
+                <CardContent className="py-20 text-center text-zinc-500">
+                  <RefreshCw className="w-6 h-6 animate-spin mx-auto mb-2" />
+                  <p className="text-sm">Loading analytics...</p>
+                </CardContent>
+              </Card>
+            ) : !analytics ? (
+              <Card className="bg-[#1a1a1a] border-white/6">
+                <CardContent className="py-20 text-center">
+                  <BarChart3 className="w-10 h-10 mx-auto mb-3 text-zinc-700" />
+                  <p className="text-zinc-400 text-sm">No analytics data available</p>
+                  <Button size="sm" onClick={fetchAnalytics} className="mt-4 gradient-primary hover:opacity-90 text-xs gap-1.5">
+                    <RefreshCw className="w-3.5 h-3.5" /> Refresh
+                  </Button>
+                </CardContent>
+              </Card>
+            ) : (
+              <>
+                {/* KPI Cards */}
+                <div className="grid grid-cols-2 lg:grid-cols-5 gap-4">
+                  {[
+                    {
+                      label: 'Total Emails',
+                      value: analytics.summary.total,
+                      icon: Mail,
+                      color: 'text-violet-400',
+                      bg: 'bg-violet-600/10',
+                      suffix: '',
+                    },
+                    {
+                      label: 'Sent',
+                      value: analytics.summary.sent,
+                      icon: CheckCircle,
+                      color: 'text-emerald-400',
+                      bg: 'bg-emerald-600/10',
+                      suffix: '',
+                    },
+                    {
+                      label: 'Pending',
+                      value: analytics.summary.draft,
+                      icon: Clock,
+                      color: 'text-amber-400',
+                      bg: 'bg-amber-600/10',
+                      suffix: '',
+                    },
+                    {
+                      label: 'Send Rate',
+                      value: analytics.summary.send_rate,
+                      icon: Percent,
+                      color: 'text-cyan-400',
+                      bg: 'bg-cyan-600/10',
+                      suffix: '%',
+                    },
+                    {
+                      label: 'Avg Score (Sent)',
+                      value: analytics.summary.avg_score_sent,
+                      icon: Award,
+                      color: 'text-pink-400',
+                      bg: 'bg-pink-600/10',
+                      suffix: '',
+                    },
+                  ].map((kpi, i) => {
+                    const Icon = kpi.icon;
+                    return (
+                      <motion.div key={kpi.label} initial={{ opacity: 0, y: 12 }} animate={{ opacity: 1, y: 0 }}
+                        transition={{ delay: i * 0.06 }}>
+                        <Card className="bg-[#1a1a1a] border-white/6">
+                          <CardContent className="p-4">
+                            <div className={`w-8 h-8 rounded-lg ${kpi.bg} flex items-center justify-center mb-3`}>
+                              <Icon className={`w-4 h-4 ${kpi.color}`} />
+                            </div>
+                            <p className={`text-2xl font-bold ${kpi.color}`}>
+                              {kpi.value}{kpi.suffix}
+                            </p>
+                            <p className="text-xs text-zinc-500 mt-0.5">{kpi.label}</p>
+                          </CardContent>
+                        </Card>
+                      </motion.div>
+                    );
+                  })}
+                </div>
+
+                {/* Charts Row */}
+                <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
+
+                  {/* Timeline Area Chart */}
+                  <div className="lg:col-span-2">
+                    <Card className="bg-[#1a1a1a] border-white/6 h-full">
+                      <CardHeader className="pb-2">
+                        <CardTitle className="text-sm flex items-center gap-2">
+                          <Activity className="w-4 h-4 text-violet-400" />
+                          Emails Sent — Last 14 Days
+                        </CardTitle>
+                      </CardHeader>
+                      <CardContent className="pt-0">
+                        {analytics.timeline.every(d => d.sent === 0) ? (
+                          <div className="h-48 flex flex-col items-center justify-center text-zinc-600">
+                            <TrendingUp className="w-8 h-8 mb-2" />
+                            <p className="text-sm">No emails sent yet</p>
+                            <p className="text-xs mt-1">Send drafts to see timeline activity</p>
+                          </div>
+                        ) : (
+                          <ResponsiveContainer width="100%" height={200}>
+                            <AreaChart data={analytics.timeline} margin={{ top: 4, right: 4, left: -20, bottom: 0 }}>
+                              <defs>
+                                <linearGradient id="sentGradient" x1="0" y1="0" x2="0" y2="1">
+                                  <stop offset="5%" stopColor="#7c3aed" stopOpacity={0.3} />
+                                  <stop offset="95%" stopColor="#7c3aed" stopOpacity={0} />
+                                </linearGradient>
+                              </defs>
+                              <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                              <XAxis
+                                dataKey="date"
+                                tickFormatter={v => {
+                                  const d = new Date(v);
+                                  return `${d.getMonth() + 1}/${d.getDate()}`;
+                                }}
+                                tick={{ fill: '#52525b', fontSize: 10 }}
+                                axisLine={false}
+                                tickLine={false}
+                                interval={1}
+                              />
+                              <YAxis
+                                tick={{ fill: '#52525b', fontSize: 10 }}
+                                axisLine={false}
+                                tickLine={false}
+                                allowDecimals={false}
+                              />
+                              <Tooltip content={<ChartTooltip />} />
+                              <Area
+                                type="monotone"
+                                dataKey="sent"
+                                name="Sent"
+                                stroke="#7c3aed"
+                                strokeWidth={2}
+                                fill="url(#sentGradient)"
+                                dot={false}
+                                activeDot={{ r: 4, fill: '#7c3aed' }}
+                              />
+                            </AreaChart>
+                          </ResponsiveContainer>
+                        )}
+                      </CardContent>
+                    </Card>
+                  </div>
+
+                  {/* Tier Breakdown Bar Chart */}
+                  <Card className="bg-[#1a1a1a] border-white/6">
+                    <CardHeader className="pb-2">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <BarChart3 className="w-4 h-4 text-amber-400" />
+                        By Score Tier
+                      </CardTitle>
+                    </CardHeader>
+                    <CardContent className="pt-0 space-y-4">
+                      <ResponsiveContainer width="100%" height={160}>
+                        <BarChart
+                          data={[
+                            { tier: 'High', sent: analytics.by_tier.high.sent, draft: analytics.by_tier.high.draft },
+                            { tier: 'Medium', sent: analytics.by_tier.medium.sent, draft: analytics.by_tier.medium.draft },
+                            { tier: 'Low', sent: analytics.by_tier.low.sent, draft: analytics.by_tier.low.draft },
+                          ]}
+                          margin={{ top: 4, right: 4, left: -20, bottom: 0 }}
+                        >
+                          <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                          <XAxis dataKey="tier" tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} />
+                          <YAxis tick={{ fill: '#52525b', fontSize: 10 }} axisLine={false} tickLine={false} allowDecimals={false} />
+                          <Tooltip content={<ChartTooltip />} />
+                          <Bar dataKey="sent" name="Sent" radius={[3, 3, 0, 0]}>
+                            <Cell fill="#10b981" />
+                            <Cell fill="#f59e0b" />
+                            <Cell fill="#ef4444" />
+                          </Bar>
+                          <Bar dataKey="draft" name="Pending" radius={[3, 3, 0, 0]}>
+                            <Cell fill="#10b98140" />
+                            <Cell fill="#f59e0b40" />
+                            <Cell fill="#ef444440" />
+                          </Bar>
+                        </BarChart>
+                      </ResponsiveContainer>
+
+                      {/* Tier detail rows */}
+                      {(['high', 'medium', 'low'] as const).map(tier => {
+                        const data = analytics.by_tier[tier];
+                        const rate = data.total > 0 ? Math.round(data.sent / data.total * 100) : 0;
+                        const cfg = TIER_CONFIG[tier];
+                        return (
+                          <div key={tier} className="space-y-1">
+                            <div className="flex items-center justify-between text-xs">
+                              <span className={`font-medium ${
+                                tier === 'high' ? 'text-emerald-400' : tier === 'medium' ? 'text-amber-400' : 'text-red-400'
+                              }`}>{cfg.label}</span>
+                              <span className="text-zinc-400">{data.sent}/{data.total} · {rate}%</span>
+                            </div>
+                            <div className="h-1.5 bg-zinc-800 rounded-full overflow-hidden">
+                              <motion.div
+                                initial={{ width: 0 }}
+                                animate={{ width: `${rate}%` }}
+                                transition={{ duration: 0.8, ease: 'easeOut' }}
+                                className={`h-full rounded-full ${
+                                  tier === 'high' ? 'bg-emerald-500' : tier === 'medium' ? 'bg-amber-500' : 'bg-red-500'
+                                }`}
+                              />
+                            </div>
+                          </div>
+                        );
+                      })}
+                    </CardContent>
+                  </Card>
+                </div>
+
+                {/* Recent Sent Activity */}
+                <Card className="bg-[#1a1a1a] border-white/6">
+                  <CardHeader className="pb-3">
+                    <div className="flex items-center justify-between">
+                      <CardTitle className="text-sm flex items-center gap-2">
+                        <Send className="w-4 h-4 text-emerald-400" />
+                        Recent Sent Emails
+                      </CardTitle>
+                      <Button variant="ghost" size="sm" onClick={fetchAnalytics} disabled={isLoadingAnalytics}
+                        className="text-zinc-500 hover:text-white h-7 px-2 gap-1 text-xs">
+                        <RefreshCw className={`w-3.5 h-3.5 ${isLoadingAnalytics ? 'animate-spin' : ''}`} />
+                        Refresh
+                      </Button>
+                    </div>
+                  </CardHeader>
+                  <CardContent className="p-0">
+                    {analytics.recent_sent.length === 0 ? (
+                      <div className="py-10 text-center text-zinc-600 text-sm">
+                        No emails sent yet — go to Draft Queue to send emails
+                      </div>
+                    ) : (
+                      <div className="divide-y divide-white/4">
+                        {analytics.recent_sent.map((item, i) => {
+                          const tier = item.tier as keyof typeof TIER_CONFIG;
+                          const cfg = TIER_CONFIG[tier] || TIER_CONFIG.low;
+                          return (
+                            <motion.div key={item.id}
+                              initial={{ opacity: 0, x: -8 }} animate={{ opacity: 1, x: 0 }}
+                              transition={{ delay: i * 0.04 }}
+                              className="flex items-center gap-3 px-4 py-3 hover:bg-white/2 transition-colors">
+
+                              <div className={`w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0 ${
+                                tier === 'high' ? 'bg-emerald-600/15' : tier === 'medium' ? 'bg-amber-600/15' : 'bg-red-600/15'
+                              }`}>
+                                <CheckCircle className={`w-4 h-4 ${
+                                  tier === 'high' ? 'text-emerald-400' : tier === 'medium' ? 'text-amber-400' : 'text-red-400'
+                                }`} />
+                              </div>
+
+                              <div className="flex-1 min-w-0">
+                                <div className="flex items-center gap-2 flex-wrap">
+                                  <p className="text-sm font-medium">{item.lead_name}</p>
+                                  <Badge className={`text-[10px] border ${cfg.badge}`}>{cfg.label}</Badge>
+                                </div>
+                                <p className="text-xs text-zinc-500 truncate mt-0.5">
+                                  {item.lead_email}
+                                  {item.recruiter_company && ` · ${item.recruiter_company}`}
+                                </p>
+                                <p className="text-xs text-zinc-600 truncate">Subject: {item.subject}</p>
+                              </div>
+
+                              <div className="text-right flex-shrink-0">
+                                <p className={`text-sm font-bold ${
+                                  tier === 'high' ? 'text-emerald-400' : tier === 'medium' ? 'text-amber-400' : 'text-red-400'
+                                }`}>{item.lead_score}</p>
+                                {item.sent_at && (
+                                  <p className="text-[10px] text-zinc-600 mt-0.5">
+                                    {fmtDate(item.sent_at)} {fmtTime(item.sent_at)}
+                                  </p>
+                                )}
+                              </div>
+                            </motion.div>
+                          );
+                        })}
+                      </div>
+                    )}
+                  </CardContent>
+                </Card>
+              </>
+            )}
           </motion.div>
         )}
 
