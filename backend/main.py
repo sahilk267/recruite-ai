@@ -88,6 +88,7 @@ class LeadModel(Base):
     priority = Column(String, default="Low Priority")
     status = Column(String, default="new")
     resume_text = Column(Text, default="")
+    pipeline_stage = Column(String, default="screened")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc),
                         onupdate=lambda: datetime.now(timezone.utc))
@@ -611,6 +612,7 @@ def lead_to_dict(l: LeadModel) -> Dict:
         "priority": l.priority,
         "status": l.status,
         "resume_text": l.resume_text,
+        "pipeline_stage": l.pipeline_stage or "screened",
         "createdAt": serialize_datetime(l.created_at),
         "updatedAt": serialize_datetime(l.updated_at),
     }
@@ -952,6 +954,29 @@ def delete_lead(lead_id: str, db: Session = Depends(get_db), _: UserModel = Depe
     db.delete(lead)
     db.commit()
     return {"message": "Lead deleted"}
+
+
+class PipelineStageUpdate(BaseModel):
+    stage: str
+
+
+@app.patch("/api/leads/{lead_id}/pipeline")
+def update_pipeline_stage(
+    lead_id: str,
+    req: PipelineStageUpdate,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    valid_stages = {"screened", "contacted", "interviewing", "offer", "hired"}
+    if req.stage not in valid_stages:
+        raise HTTPException(status_code=400, detail=f"Invalid stage. Must be one of: {', '.join(valid_stages)}")
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Lead not found")
+    lead.pipeline_stage = req.stage
+    db.commit()
+    db.refresh(lead)
+    return lead_to_dict(lead)
 
 
 # ─── Recruiters Routes ────────────────────────────────────────────────────────

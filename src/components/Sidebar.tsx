@@ -26,7 +26,8 @@ import {
   UserCheck,
   ScanText,
   ListChecks,
-  SendHorizonal
+  SendHorizonal,
+  KanbanSquare,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -42,6 +43,7 @@ const navItems = [
   { id: 'resume-screener', label: 'Resume Screener', icon: ScanText, badge: 'AI' },
   { id: 'candidate-matching', label: 'Candidate Match', icon: ListChecks, badge: 'AI' },
   { id: 'outreach-automation', label: 'Email Outreach', icon: SendHorizonal, badge: 'AI' },
+  { id: 'candidate-pipeline', label: 'Pipeline Board', icon: KanbanSquare },
   { id: 'traffic', label: 'Traffic Engine', icon: Megaphone },
   { id: 'jobs', label: 'Job Intelligence', icon: Search },
   { id: 'ai-processing', label: 'AI Processing', icon: Brain },

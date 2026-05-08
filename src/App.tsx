@@ -30,6 +30,7 @@ import SequenceBuilder from './sections/SequenceBuilder';
 import { ResumeScreener } from './sections/ResumeScreener';
 import { CandidateMatching } from './sections/CandidateMatching';
 import { OutreachAutomation } from './sections/OutreachAutomation';
+import { CandidatePipeline } from './sections/CandidatePipeline';
 
 type Section =
   | 'dashboard'
@@ -58,7 +59,8 @@ type Section =
   | 'sequences'
   | 'resume-screener'
   | 'candidate-matching'
-  | 'outreach-automation';
+  | 'outreach-automation'
+  | 'candidate-pipeline';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -138,6 +140,8 @@ function App() {
         return <CandidateMatching />;
       case 'outreach-automation':
         return <OutreachAutomation />;
+      case 'candidate-pipeline':
+        return <CandidatePipeline />;
       default:
         return <DashboardOverview />;
     }
@@ -172,6 +176,7 @@ function App() {
       'resume-screener': 'AI Resume Screener',
       'candidate-matching': 'AI Candidate Matching',
       'outreach-automation': 'Automated Email Outreach',
+      'candidate-pipeline': 'Candidate Pipeline Board',
     };
     return titles[activeSection] || 'Dashboard';
   };
