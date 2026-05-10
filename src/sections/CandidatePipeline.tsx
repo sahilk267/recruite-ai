@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef } from 'react';
+import { useState, useEffect, useRef, useMemo } from 'react';
 import {
   GripVertical,
   User,
@@ -20,9 +20,12 @@ import {
   BadgeCheck,
   Flame,
   ClipboardList,
+  Search,
+  SlidersHorizontal,
+  ChevronDown,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
-import { Button } from '@/components/ui/button';
+import { Input } from '@/components/ui/input';
 import { cn } from '@/lib/utils';
 import apiClient from '@/services/api';
 import { toast } from 'sonner';
@@ -121,6 +124,242 @@ function scoreBarColor(score: number) {
   if (score >= 75) return 'bg-emerald-500';
   if (score >= 50) return 'bg-amber-500';
   return 'bg-red-500';
+}
+
+// ─── Filter Types ─────────────────────────────────────────────────────────────
+
+type ScoreFilter = 'all' | 'high' | 'medium' | 'low';
+
+interface Filters {
+  search: string;
+  score: ScoreFilter;
+  skill: string;
+  stage: string;
+}
+
+const SCORE_OPTIONS: { id: ScoreFilter; label: string; range: string; color: string; bg: string; border: string }[] = [
+  { id: 'all',    label: 'All Scores', range: '',      color: 'text-zinc-300',   bg: 'bg-white/8',          border: 'border-white/15' },
+  { id: 'high',   label: 'High',       range: '75+',   color: 'text-emerald-400', bg: 'bg-emerald-500/15',  border: 'border-emerald-500/40' },
+  { id: 'medium', label: 'Medium',     range: '50–74', color: 'text-amber-400',   bg: 'bg-amber-500/15',    border: 'border-amber-500/40' },
+  { id: 'low',    label: 'Low',        range: '<50',   color: 'text-red-400',     bg: 'bg-red-500/15',      border: 'border-red-500/40' },
+];
+
+// ─── Filter Bar ───────────────────────────────────────────────────────────────
+
+function FilterBar({
+  filters,
+  onChange,
+  allSkills,
+  totalVisible,
+  totalAll,
+}: {
+  filters: Filters;
+  onChange: (f: Filters) => void;
+  allSkills: string[];
+  totalVisible: number;
+  totalAll: number;
+}) {
+  const [skillOpen, setSkillOpen] = useState(false);
+  const [stageOpen, setStageOpen] = useState(false);
+  const skillRef = useRef<HTMLDivElement>(null);
+  const stageRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    function handler(e: MouseEvent) {
+      if (skillRef.current && !skillRef.current.contains(e.target as Node)) setSkillOpen(false);
+      if (stageRef.current && !stageRef.current.contains(e.target as Node)) setStageOpen(false);
+    }
+    document.addEventListener('mousedown', handler);
+    return () => document.removeEventListener('mousedown', handler);
+  }, []);
+
+  const activeCount = [
+    filters.search !== '',
+    filters.score !== 'all',
+    filters.skill !== '',
+    filters.stage !== '',
+  ].filter(Boolean).length;
+
+  function clearAll() {
+    onChange({ search: '', score: 'all', skill: '', stage: '' });
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex flex-wrap items-center gap-2">
+        {/* Search */}
+        <div className="relative flex-1 min-w-[200px] max-w-xs">
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-zinc-500" />
+          <Input
+            value={filters.search}
+            onChange={(e) => onChange({ ...filters, search: e.target.value })}
+            placeholder="Search name or email…"
+            className="pl-9 h-9 bg-[#1e1e1e] border-white/10 text-sm text-white placeholder:text-zinc-600 focus-visible:ring-violet-500/40 focus-visible:border-violet-500/40"
+          />
+          {filters.search && (
+            <button onClick={() => onChange({ ...filters, search: '' })} className="absolute right-2 top-1/2 -translate-y-1/2 text-zinc-600 hover:text-zinc-300">
+              <X className="w-3 h-3" />
+            </button>
+          )}
+        </div>
+
+        {/* Score filter chips */}
+        <div className="flex items-center gap-1.5 bg-[#1e1e1e] border border-white/8 rounded-xl p-1">
+          {SCORE_OPTIONS.map((opt) => (
+            <button
+              key={opt.id}
+              onClick={() => onChange({ ...filters, score: opt.id })}
+              className={cn(
+                'flex items-center gap-1.5 px-2.5 py-1 rounded-lg text-xs font-semibold transition-all',
+                filters.score === opt.id
+                  ? cn(opt.bg, opt.border, opt.color, 'border')
+                  : 'text-zinc-500 hover:text-zinc-300 hover:bg-white/5'
+              )}
+            >
+              {opt.label}
+              {opt.range && <span className="text-[9px] opacity-70">{opt.range}</span>}
+            </button>
+          ))}
+        </div>
+
+        {/* Skill dropdown */}
+        <div className="relative" ref={skillRef}>
+          <button
+            onClick={() => setSkillOpen((v) => !v)}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all h-9',
+              filters.skill
+                ? 'bg-violet-500/15 border-violet-500/40 text-violet-400'
+                : 'bg-[#1e1e1e] border-white/10 text-zinc-400 hover:text-zinc-200 hover:border-white/20'
+            )}
+          >
+            <BadgeCheck className="w-3.5 h-3.5" />
+            {filters.skill || 'Skill'}
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          </button>
+          {skillOpen && (
+            <div className="absolute top-10 left-0 z-50 bg-[#222] border border-white/10 rounded-xl shadow-xl shadow-black/60 py-1 min-w-[180px] max-h-60 overflow-y-auto">
+              <button
+                onClick={() => { onChange({ ...filters, skill: '' }); setSkillOpen(false); }}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 transition-colors"
+              >
+                All Skills
+              </button>
+              {allSkills.map((s) => (
+                <button
+                  key={s}
+                  onClick={() => { onChange({ ...filters, skill: s }); setSkillOpen(false); }}
+                  className={cn('w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors flex items-center gap-2',
+                    filters.skill === s ? 'text-violet-400' : 'text-zinc-300'
+                  )}
+                >
+                  {filters.skill === s && <Check className="w-3 h-3 flex-shrink-0" />}
+                  {s}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Stage dropdown */}
+        <div className="relative" ref={stageRef}>
+          <button
+            onClick={() => setStageOpen((v) => !v)}
+            className={cn(
+              'flex items-center gap-1.5 px-3 py-2 rounded-xl border text-xs font-semibold transition-all h-9',
+              filters.stage
+                ? cn(STAGES.find(s => s.id === filters.stage)?.bg, STAGES.find(s => s.id === filters.stage)?.border, STAGES.find(s => s.id === filters.stage)?.color)
+                : 'bg-[#1e1e1e] border-white/10 text-zinc-400 hover:text-zinc-200 hover:border-white/20'
+            )}
+          >
+            <SlidersHorizontal className="w-3.5 h-3.5" />
+            {filters.stage ? STAGES.find(s => s.id === filters.stage)?.label : 'Stage'}
+            <ChevronDown className="w-3 h-3 opacity-60" />
+          </button>
+          {stageOpen && (
+            <div className="absolute top-10 left-0 z-50 bg-[#222] border border-white/10 rounded-xl shadow-xl shadow-black/60 py-1 min-w-[160px]">
+              <button
+                onClick={() => { onChange({ ...filters, stage: '' }); setStageOpen(false); }}
+                className="w-full text-left px-3 py-2 text-xs text-zinc-400 hover:bg-white/5 transition-colors"
+              >
+                All Stages
+              </button>
+              {STAGES.map((s) => (
+                <button
+                  key={s.id}
+                  onClick={() => { onChange({ ...filters, stage: s.id }); setStageOpen(false); }}
+                  className={cn('w-full text-left px-3 py-2 text-xs hover:bg-white/5 transition-colors flex items-center gap-2', s.color)}
+                >
+                  <span className={cn('w-1.5 h-1.5 rounded-full flex-shrink-0', s.dot)} />
+                  {s.label}
+                  {filters.stage === s.id && <Check className="w-3 h-3 ml-auto flex-shrink-0" />}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Clear all */}
+        {activeCount > 0 && (
+          <button
+            onClick={clearAll}
+            className="flex items-center gap-1.5 px-3 py-2 rounded-xl border border-red-500/30 bg-red-500/10 text-red-400 text-xs font-semibold hover:bg-red-500/20 transition-all h-9"
+          >
+            <X className="w-3 h-3" />
+            Clear ({activeCount})
+          </button>
+        )}
+
+        {/* Result count */}
+        <span className="text-xs text-zinc-600 ml-auto">
+          {totalVisible === totalAll
+            ? `${totalAll} candidates`
+            : <span><span className="text-white font-semibold">{totalVisible}</span> of {totalAll}</span>
+          }
+        </span>
+      </div>
+
+      {/* Active filter chips */}
+      {activeCount > 0 && (
+        <div className="flex flex-wrap gap-1.5">
+          {filters.search && (
+            <span className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-white/6 border border-white/10 text-zinc-300">
+              <Search className="w-2.5 h-2.5 text-zinc-500" />
+              "{filters.search}"
+              <button onClick={() => onChange({ ...filters, search: '' })} className="ml-1 text-zinc-600 hover:text-zinc-300"><X className="w-2.5 h-2.5" /></button>
+            </span>
+          )}
+          {filters.score !== 'all' && (() => {
+            const opt = SCORE_OPTIONS.find(o => o.id === filters.score)!;
+            return (
+              <span className={cn('flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border', opt.bg, opt.border, opt.color)}>
+                <Star className="w-2.5 h-2.5" />
+                {opt.label} {opt.range}
+                <button onClick={() => onChange({ ...filters, score: 'all' })} className="ml-1 opacity-60 hover:opacity-100"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            );
+          })()}
+          {filters.skill && (
+            <span className="flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg bg-violet-500/15 border border-violet-500/40 text-violet-400">
+              <BadgeCheck className="w-2.5 h-2.5" />
+              {filters.skill}
+              <button onClick={() => onChange({ ...filters, skill: '' })} className="ml-1 opacity-60 hover:opacity-100"><X className="w-2.5 h-2.5" /></button>
+            </span>
+          )}
+          {filters.stage && (() => {
+            const s = STAGES.find(st => st.id === filters.stage)!;
+            return (
+              <span className={cn('flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg border', s.bg, s.border, s.color)}>
+                <span className={cn('w-1.5 h-1.5 rounded-full', s.dot)} />
+                {s.label} only
+                <button onClick={() => onChange({ ...filters, stage: '' })} className="ml-1 opacity-60 hover:opacity-100"><X className="w-2.5 h-2.5" /></button>
+              </span>
+            );
+          })()}
+        </div>
+      )}
+    </div>
+  );
 }
 
 // ─── Candidate Detail Drawer ──────────────────────────────────────────────────
@@ -587,11 +826,10 @@ export function CandidatePipeline() {
   const [loading, setLoading] = useState(true);
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
+  const [filters, setFilters] = useState<Filters>({ search: '', score: 'all', skill: '', stage: '' });
   const draggingCandidate = useRef<Candidate | null>(null);
 
-  useEffect(() => {
-    fetchCandidates();
-  }, []);
+  useEffect(() => { fetchCandidates(); }, []);
 
   async function fetchCandidates() {
     try {
@@ -606,8 +844,29 @@ export function CandidatePipeline() {
     }
   }
 
+  // All unique skills across all candidates (for the skill dropdown)
+  const allSkills = useMemo(() => {
+    const set = new Set<string>();
+    candidates.forEach((c) => c.skills.forEach((s) => set.add(s)));
+    return Array.from(set).sort();
+  }, [candidates]);
+
+  // Apply filters
+  const filteredCandidates = useMemo(() => {
+    const q = filters.search.toLowerCase().trim();
+    return candidates.filter((c) => {
+      if (q && !c.name.toLowerCase().includes(q) && !c.email.toLowerCase().includes(q)) return false;
+      if (filters.score === 'high'   && c.score < 75)              return false;
+      if (filters.score === 'medium' && (c.score < 50 || c.score >= 75)) return false;
+      if (filters.score === 'low'    && c.score >= 50)             return false;
+      if (filters.skill && !c.skills.some((s) => s === filters.skill)) return false;
+      if (filters.stage && (c.pipeline_stage || 'screened') !== filters.stage) return false;
+      return true;
+    });
+  }, [candidates, filters]);
+
   function getCandidatesForStage(stageId: string) {
-    return candidates.filter((c) => (c.pipeline_stage || 'screened') === stageId);
+    return filteredCandidates.filter((c) => (c.pipeline_stage || 'screened') === stageId);
   }
 
   function handleDragStart(e: React.DragEvent, candidate: Candidate) {
@@ -621,28 +880,18 @@ export function CandidatePipeline() {
     setDragOverStage(stageId);
   }
 
-  function handleDragLeave() {
-    setDragOverStage(null);
-  }
+  function handleDragLeave() { setDragOverStage(null); }
 
   async function moveCandidate(candidate: Candidate, targetStage: string) {
     if (candidate.pipeline_stage === targetStage) return;
-
     const prevStage = candidate.pipeline_stage;
-    setCandidates((prev) =>
-      prev.map((c) => c.id === candidate.id ? { ...c, pipeline_stage: targetStage } : c)
-    );
-    // Keep drawer in sync
+    setCandidates((prev) => prev.map((c) => c.id === candidate.id ? { ...c, pipeline_stage: targetStage } : c));
     setSelectedCandidate((prev) => prev?.id === candidate.id ? { ...prev, pipeline_stage: targetStage } : prev);
-
     try {
       await apiClient.patch(`/api/leads/${candidate.id}/pipeline`, { stage: targetStage });
-      const stageMeta = STAGES.find((s) => s.id === targetStage);
-      toast.success(`${candidate.name} moved to ${stageMeta?.label ?? targetStage}`);
+      toast.success(`${candidate.name} moved to ${STAGES.find((s) => s.id === targetStage)?.label ?? targetStage}`);
     } catch {
-      setCandidates((prev) =>
-        prev.map((c) => c.id === candidate.id ? { ...c, pipeline_stage: prevStage } : c)
-      );
+      setCandidates((prev) => prev.map((c) => c.id === candidate.id ? { ...c, pipeline_stage: prevStage } : c));
       setSelectedCandidate((prev) => prev?.id === candidate.id ? { ...prev, pipeline_stage: prevStage } : prev);
       toast.error('Failed to update stage');
     }
@@ -657,12 +906,14 @@ export function CandidatePipeline() {
     await moveCandidate(candidate, stageId);
   }
 
-  const totalHired = getCandidatesForStage('hired').length;
+  // Stats always reflect unfiltered totals
+  const totalHired    = candidates.filter((c) => (c.pipeline_stage || 'screened') === 'hired').length;
   const totalCandidates = candidates.length;
   const avgScore = candidates.length
-    ? Math.round(candidates.reduce((sum, c) => sum + c.score, 0) / candidates.length)
-    : 0;
+    ? Math.round(candidates.reduce((sum, c) => sum + c.score, 0) / candidates.length) : 0;
   const inProgress = candidates.filter((c) => !['screened', 'hired'].includes(c.pipeline_stage || 'screened')).length;
+
+  const isFiltering = filteredCandidates.length !== candidates.length;
 
   if (loading) {
     return (
@@ -675,6 +926,7 @@ export function CandidatePipeline() {
   return (
     <>
       <div className="space-y-6">
+        {/* Header */}
         <div className="flex items-center justify-between">
           <div>
             <h2 className="text-2xl font-bold text-white">Candidate Pipeline</h2>
@@ -686,12 +938,13 @@ export function CandidatePipeline() {
           </div>
         </div>
 
+        {/* Stats */}
         <div className="grid grid-cols-4 gap-4">
           {[
-            { label: 'Total Candidates', value: totalCandidates, icon: Users, color: 'text-blue-400', bg: 'bg-blue-500/10 border-blue-500/20' },
-            { label: 'In Progress', value: inProgress, icon: ChevronRight, color: 'text-violet-400', bg: 'bg-violet-500/10 border-violet-500/20' },
-            { label: 'Avg AI Score', value: avgScore, icon: Flame, color: 'text-amber-400', bg: 'bg-amber-500/10 border-amber-500/20' },
-            { label: 'Hired', value: totalHired, icon: Check, color: 'text-emerald-400', bg: 'bg-emerald-500/10 border-emerald-500/20' },
+            { label: 'Total Candidates', value: totalCandidates, icon: Users,        color: 'text-blue-400',   bg: 'bg-blue-500/10 border-blue-500/20' },
+            { label: 'In Progress',      value: inProgress,      icon: ChevronRight, color: 'text-violet-400', bg: 'bg-violet-500/10 border-violet-500/20' },
+            { label: 'Avg AI Score',     value: avgScore,        icon: Flame,        color: 'text-amber-400',  bg: 'bg-amber-500/10 border-amber-500/20' },
+            { label: 'Hired',            value: totalHired,      icon: Check,        color: 'text-emerald-400',bg: 'bg-emerald-500/10 border-emerald-500/20' },
           ].map((stat) => {
             const Icon = stat.icon;
             return (
@@ -710,24 +963,52 @@ export function CandidatePipeline() {
           })}
         </div>
 
-        <div className="overflow-x-auto pb-4">
-          <div className="flex gap-4 min-w-max">
-            {STAGES.map((stage) => (
-              <KanbanColumn
-                key={stage.id}
-                stage={stage}
-                candidates={getCandidatesForStage(stage.id)}
-                onDragStart={handleDragStart}
-                onDrop={handleDrop}
-                onDragOver={handleDragOver}
-                onDragLeave={handleDragLeave}
-                isDragOver={dragOverStage === stage.id}
-                onMoveToStage={moveCandidate}
-                onOpenCandidate={setSelectedCandidate}
-              />
-            ))}
-          </div>
+        {/* Filter bar */}
+        <div className="bg-[#1a1a1a] border border-white/8 rounded-xl p-3">
+          <FilterBar
+            filters={filters}
+            onChange={setFilters}
+            allSkills={allSkills}
+            totalVisible={filteredCandidates.length}
+            totalAll={candidates.length}
+          />
         </div>
+
+        {/* Empty state when all filtered out */}
+        {isFiltering && filteredCandidates.length === 0 && (
+          <div className="flex flex-col items-center justify-center py-16 text-zinc-600 bg-[#1a1a1a] border border-white/6 rounded-xl">
+            <Search className="w-10 h-10 mb-3 opacity-30" />
+            <p className="text-sm font-medium text-zinc-500">No candidates match your filters</p>
+            <button
+              onClick={() => setFilters({ search: '', score: 'all', skill: '', stage: '' })}
+              className="mt-3 text-xs text-violet-400 hover:text-violet-300 underline underline-offset-2"
+            >
+              Clear all filters
+            </button>
+          </div>
+        )}
+
+        {/* Kanban board */}
+        {filteredCandidates.length > 0 && (
+          <div className="overflow-x-auto pb-4">
+            <div className="flex gap-4 min-w-max">
+              {STAGES.map((stage) => (
+                <KanbanColumn
+                  key={stage.id}
+                  stage={stage}
+                  candidates={getCandidatesForStage(stage.id)}
+                  onDragStart={handleDragStart}
+                  onDrop={handleDrop}
+                  onDragOver={handleDragOver}
+                  onDragLeave={handleDragLeave}
+                  isDragOver={dragOverStage === stage.id}
+                  onMoveToStage={moveCandidate}
+                  onOpenCandidate={setSelectedCandidate}
+                />
+              ))}
+            </div>
+          </div>
+        )}
       </div>
 
       {/* Detail drawer */}
