@@ -1,4 +1,4 @@
-import { useState, useEffect, useRef, useMemo } from 'react';
+import { useState, useEffect, useRef, useMemo, useCallback } from 'react';
 import {
   GripVertical,
   User,
@@ -23,6 +23,9 @@ import {
   Search,
   SlidersHorizontal,
   ChevronDown,
+  History,
+  ChevronUp,
+  RefreshCw,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -356,6 +359,145 @@ function FilterBar({
               </span>
             );
           })()}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ─── Activity Log Types & Helpers ────────────────────────────────────────────
+
+interface ActivityEntry {
+  id: string;
+  lead_id: string;
+  lead_name: string;
+  from_stage: string;
+  to_stage: string;
+  moved_by_name: string;
+  moved_by_email: string;
+  moved_at: string;
+}
+
+function timeAgo(iso: string): string {
+  const diff = Date.now() - new Date(iso).getTime();
+  const s = Math.floor(diff / 1000);
+  if (s < 60) return `${s}s ago`;
+  const m = Math.floor(s / 60);
+  if (m < 60) return `${m}m ago`;
+  const h = Math.floor(m / 60);
+  if (h < 24) return `${h}h ago`;
+  const d = Math.floor(h / 24);
+  return `${d}d ago`;
+}
+
+function initials(name: string) {
+  return name.split(' ').map((w) => w[0]).slice(0, 2).join('').toUpperCase();
+}
+
+// ─── Activity Log Component ──────────────────────────────────────────────────
+
+function ActivityLog({
+  entries,
+  loading,
+  onRefresh,
+}: {
+  entries: ActivityEntry[];
+  loading: boolean;
+  onRefresh: () => void;
+}) {
+  return (
+    <div className="bg-[#1a1a1a] border border-white/8 rounded-xl overflow-hidden">
+      {/* Header */}
+      <div className="flex items-center justify-between px-4 py-3 border-b border-white/8">
+        <div className="flex items-center gap-2">
+          <History className="w-4 h-4 text-violet-400" />
+          <span className="text-sm font-semibold text-white">Activity Log</span>
+          {entries.length > 0 && (
+            <span className="text-[10px] font-bold px-1.5 py-0.5 rounded-md bg-violet-500/20 text-violet-400 border border-violet-500/30">
+              {entries.length}
+            </span>
+          )}
+        </div>
+        <button
+          onClick={onRefresh}
+          disabled={loading}
+          className="p-1.5 rounded-lg text-zinc-500 hover:text-zinc-300 hover:bg-white/5 transition-all"
+          title="Refresh"
+        >
+          <RefreshCw className={cn('w-3.5 h-3.5', loading && 'animate-spin')} />
+        </button>
+      </div>
+
+      {/* Entries */}
+      {loading && entries.length === 0 ? (
+        <div className="flex items-center justify-center py-10 text-zinc-700">
+          <RefreshCw className="w-5 h-5 animate-spin mr-2" />
+          <span className="text-xs">Loading activity…</span>
+        </div>
+      ) : entries.length === 0 ? (
+        <div className="flex flex-col items-center justify-center py-10 text-zinc-700">
+          <History className="w-8 h-8 mb-2 opacity-30" />
+          <p className="text-xs text-zinc-600">No moves recorded yet.</p>
+          <p className="text-[11px] text-zinc-700 mt-1">Drag a candidate to a new stage to start the log.</p>
+        </div>
+      ) : (
+        <div className="divide-y divide-white/5 max-h-80 overflow-y-auto">
+          <AnimatePresence initial={false}>
+            {entries.map((e) => {
+              const fromStage = STAGES.find((s) => s.id === e.from_stage);
+              const toStage   = STAGES.find((s) => s.id === e.to_stage);
+              return (
+                <motion.div
+                  key={e.id}
+                  initial={{ opacity: 0, y: -8 }}
+                  animate={{ opacity: 1, y: 0 }}
+                  transition={{ duration: 0.2 }}
+                  className="flex items-start gap-3 px-4 py-3 hover:bg-white/3 transition-colors"
+                >
+                  {/* Actor avatar */}
+                  <div className="w-7 h-7 rounded-full bg-violet-500/20 border border-violet-500/30 flex items-center justify-center flex-shrink-0 mt-0.5">
+                    <span className="text-[9px] font-bold text-violet-400">{initials(e.moved_by_name || e.moved_by_email)}</span>
+                  </div>
+
+                  {/* Content */}
+                  <div className="flex-1 min-w-0">
+                    <div className="flex flex-wrap items-center gap-1.5 text-xs">
+                      <span className="font-semibold text-white truncate">{e.moved_by_name || e.moved_by_email}</span>
+                      <span className="text-zinc-600">moved</span>
+                      <span className="font-semibold text-zinc-200 truncate">{e.lead_name}</span>
+                    </div>
+                    <div className="flex items-center gap-1.5 mt-1 flex-wrap">
+                      {fromStage ? (
+                        <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-lg border', fromStage.bg, fromStage.border, fromStage.color)}>
+                          {fromStage.label}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg border bg-white/5 border-white/10 text-zinc-400">{e.from_stage}</span>
+                      )}
+                      <ArrowRight className="w-3 h-3 text-zinc-600 flex-shrink-0" />
+                      {toStage ? (
+                        <span className={cn('text-[10px] font-semibold px-2 py-0.5 rounded-lg border', toStage.bg, toStage.border, toStage.color)}>
+                          {toStage.label}
+                        </span>
+                      ) : (
+                        <span className="text-[10px] font-semibold px-2 py-0.5 rounded-lg border bg-white/5 border-white/10 text-zinc-400">{e.to_stage}</span>
+                      )}
+                    </div>
+                  </div>
+
+                  {/* Timestamp */}
+                  <div className="flex-shrink-0 text-right">
+                    <span
+                      className="text-[10px] text-zinc-600 hover:text-zinc-400 cursor-default transition-colors"
+                      title={new Date(e.moved_at).toLocaleString()}
+                    >
+                      {timeAgo(e.moved_at)}
+                    </span>
+                  </div>
+                </motion.div>
+              );
+            })}
+          </AnimatePresence>
         </div>
       )}
     </div>
@@ -827,9 +969,12 @@ export function CandidatePipeline() {
   const [dragOverStage, setDragOverStage] = useState<string | null>(null);
   const [selectedCandidate, setSelectedCandidate] = useState<Candidate | null>(null);
   const [filters, setFilters] = useState<Filters>({ search: '', score: 'all', skill: '', stage: '' });
+  const [activityEntries, setActivityEntries] = useState<ActivityEntry[]>([]);
+  const [activityLoading, setActivityLoading] = useState(false);
+  const [showActivity, setShowActivity] = useState(true);
   const draggingCandidate = useRef<Candidate | null>(null);
 
-  useEffect(() => { fetchCandidates(); }, []);
+  useEffect(() => { fetchCandidates(); fetchActivity(); }, []);
 
   async function fetchCandidates() {
     try {
@@ -843,6 +988,18 @@ export function CandidatePipeline() {
       setLoading(false);
     }
   }
+
+  const fetchActivity = useCallback(async () => {
+    try {
+      setActivityLoading(true);
+      const res = await apiClient.get('/api/pipeline/activity?limit=50');
+      setActivityEntries(res.data);
+    } catch {
+      // silently ignore — activity log is non-critical
+    } finally {
+      setActivityLoading(false);
+    }
+  }, []);
 
   // All unique skills across all candidates (for the skill dropdown)
   const allSkills = useMemo(() => {
@@ -890,6 +1047,7 @@ export function CandidatePipeline() {
     try {
       await apiClient.patch(`/api/leads/${candidate.id}/pipeline`, { stage: targetStage });
       toast.success(`${candidate.name} moved to ${STAGES.find((s) => s.id === targetStage)?.label ?? targetStage}`);
+      fetchActivity();
     } catch {
       setCandidates((prev) => prev.map((c) => c.id === candidate.id ? { ...c, pipeline_stage: prevStage } : c));
       setSelectedCandidate((prev) => prev?.id === candidate.id ? { ...prev, pipeline_stage: prevStage } : prev);
@@ -932,9 +1090,31 @@ export function CandidatePipeline() {
             <h2 className="text-2xl font-bold text-white">Candidate Pipeline</h2>
             <p className="text-zinc-400 text-sm mt-0.5">Drag candidates through hiring stages · Click any card for details</p>
           </div>
-          <div className="flex items-center gap-2 text-xs text-zinc-500 bg-white/5 border border-white/8 rounded-xl px-4 py-2.5">
-            <GripVertical className="w-3.5 h-3.5" />
-            Drag to move · Click to view
+          <div className="flex items-center gap-2">
+            <button
+              onClick={() => setShowActivity((v) => !v)}
+              className={cn(
+                'flex items-center gap-2 text-xs px-3 py-2.5 rounded-xl border transition-all',
+                showActivity
+                  ? 'bg-violet-500/15 border-violet-500/40 text-violet-400'
+                  : 'bg-white/5 border-white/8 text-zinc-500 hover:text-zinc-300 hover:border-white/15'
+              )}
+            >
+              <History className="w-3.5 h-3.5" />
+              Activity Log
+              {activityEntries.length > 0 && (
+                <span className={cn('text-[10px] font-bold px-1.5 py-0.5 rounded',
+                  showActivity ? 'bg-violet-500/30 text-violet-300' : 'bg-white/10 text-zinc-400'
+                )}>
+                  {activityEntries.length}
+                </span>
+              )}
+              {showActivity ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
+            </button>
+            <div className="flex items-center gap-2 text-xs text-zinc-500 bg-white/5 border border-white/8 rounded-xl px-4 py-2.5">
+              <GripVertical className="w-3.5 h-3.5" />
+              Drag to move · Click to view
+            </div>
           </div>
         </div>
 
@@ -1009,6 +1189,26 @@ export function CandidatePipeline() {
             </div>
           </div>
         )}
+
+        {/* Activity log panel */}
+        <AnimatePresence>
+          {showActivity && (
+            <motion.div
+              key="activity-log"
+              initial={{ opacity: 0, height: 0 }}
+              animate={{ opacity: 1, height: 'auto' }}
+              exit={{ opacity: 0, height: 0 }}
+              transition={{ duration: 0.25, ease: 'easeInOut' }}
+              style={{ overflow: 'hidden' }}
+            >
+              <ActivityLog
+                entries={activityEntries}
+                loading={activityLoading}
+                onRefresh={fetchActivity}
+              />
+            </motion.div>
+          )}
+        </AnimatePresence>
       </div>
 
       {/* Detail drawer */}

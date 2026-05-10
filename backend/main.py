@@ -186,6 +186,20 @@ class OutreachDraftModel(Base):
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
+class PipelineActivityModel(Base):
+    """Immutable audit log — one row per pipeline stage move."""
+    __tablename__ = "pipeline_activity"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String, nullable=False, index=True)
+    lead_name = Column(String, nullable=False, default="")
+    from_stage = Column(String, nullable=False, default="")
+    to_stage = Column(String, nullable=False)
+    moved_by_id = Column(String, nullable=False)
+    moved_by_name = Column(String, nullable=False, default="")
+    moved_by_email = Column(String, nullable=False, default="")
+    moved_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
+
+
 # ─── Create Tables ─────────────────────────────────────────────────────────────
 
 Base.metadata.create_all(bind=engine)
@@ -965,7 +979,7 @@ def update_pipeline_stage(
     lead_id: str,
     req: PipelineStageUpdate,
     db: Session = Depends(get_db),
-    _: UserModel = Depends(get_current_user),
+    current_user: UserModel = Depends(get_current_user),
 ):
     valid_stages = {"screened", "contacted", "interviewing", "offer", "hired"}
     if req.stage not in valid_stages:
@@ -973,10 +987,48 @@ def update_pipeline_stage(
     lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
     if not lead:
         raise HTTPException(status_code=404, detail="Lead not found")
+    from_stage = lead.pipeline_stage or "screened"
     lead.pipeline_stage = req.stage
+    activity = PipelineActivityModel(
+        lead_id=lead.id,
+        lead_name=lead.name,
+        from_stage=from_stage,
+        to_stage=req.stage,
+        moved_by_id=current_user.id,
+        moved_by_name=current_user.name,
+        moved_by_email=current_user.email,
+    )
+    db.add(activity)
     db.commit()
     db.refresh(lead)
     return lead_to_dict(lead)
+
+
+@app.get("/api/pipeline/activity")
+def get_pipeline_activity(
+    lead_id: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    query = db.query(PipelineActivityModel)
+    if lead_id:
+        query = query.filter(PipelineActivityModel.lead_id == lead_id)
+    entries = query.order_by(PipelineActivityModel.moved_at.desc()).limit(limit).all()
+    return [
+        {
+            "id": e.id,
+            "lead_id": e.lead_id,
+            "lead_name": e.lead_name,
+            "from_stage": e.from_stage,
+            "to_stage": e.to_stage,
+            "moved_by_id": e.moved_by_id,
+            "moved_by_name": e.moved_by_name,
+            "moved_by_email": e.moved_by_email,
+            "moved_at": e.moved_at.isoformat() if e.moved_at else None,
+        }
+        for e in entries
+    ]
 
 
 # ─── Recruiters Routes ────────────────────────────────────────────────────────

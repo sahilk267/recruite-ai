@@ -1,7 +1,7 @@
 # RecruitAI - AI-Powered Recruitment SaaS
 
 ## Overview
-A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real AI-powered resume parsing, candidate scoring, job-candidate matching, plus a complete recruitment management dashboard.
+A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real AI-powered resume parsing, candidate scoring, job-candidate matching, plus a complete recruitment management dashboard with Kanban pipeline, search/filter, and full audit trail.
 
 ## Architecture
 
@@ -32,8 +32,9 @@ src/
   components/          - Header, Sidebar, LoginModal, ui/ (shadcn)
   context/             - AuthContext for JWT state management
   sections/            - All 25 page sections (Dashboard, Jobs, Leads, etc.)
-    ResumeScreener.tsx  - NEW: AI resume parser + job matching
-    CandidateMatching.tsx - NEW: AI candidate ranking per job
+    CandidatePipeline.tsx - Kanban board, search/filter bar, activity log
+    ResumeScreener.tsx  - AI resume parser + job matching
+    CandidateMatching.tsx - AI candidate ranking per job
   services/            - API client + service layer
   types/               - TypeScript type definitions
 
@@ -42,6 +43,8 @@ backend/
     - Auth: POST /api/auth/login, /api/auth/register, GET /api/auth/me
     - Jobs: GET/POST/PATCH/DELETE /api/jobs
     - Leads: GET/POST/PATCH/DELETE /api/leads + POST /api/leads/{id}/score
+    - Pipeline: PATCH /api/leads/{id}/pipeline (move stage + write activity)
+    - Activity: GET /api/pipeline/activity?lead_id=&limit= (audit log)
     - Recruiters: GET/POST/PATCH/DELETE /api/recruiters
     - Deals: GET/POST/PATCH/DELETE /api/deals + POST /api/deals/{id}/close
     - Payments: GET/POST /api/payments + POST /api/payments/{id}/record
@@ -88,6 +91,49 @@ All AI runs locally — no external APIs:
 4. **Job-Candidate Matching**: Skill intersection (65%) + experience fit (30%) + base (5%)
 5. **Education Detection**: PhD/Masters/Bachelors/Diploma detection from resume text
 
+## Pipeline Board Features
+
+- **Kanban view**: 5 stages — Screened → Contacted → Interviewing → Offer → Hired
+- **Drag & drop**: Move candidates between columns; persisted to DB instantly
+- **Candidate drawer**: Slide-in detail panel with full profile, AI score, pipeline journey, move buttons
+- **Search & filter bar**: Filter by name/email, score range (High/Medium/Low), skill, and stage
+- **Activity log**: Full audit trail of every stage move — who moved whom, from/to stage, timestamp
+
+## Database Tables
+
+| Table | Purpose |
+|---|---|
+| `users` | Auth accounts |
+| `jobs` | Job listings |
+| `leads` | Candidates (`pipeline_stage` column added via ALTER TABLE) |
+| `recruiters` | Recruiter CRM |
+| `deals` | Placement deals |
+| `payments` | Revenue tracking |
+| `templates` | Email templates |
+| `tier_templates` | Score-tier outreach templates |
+| `outreach_drafts` | AI-generated personalized emails |
+| `pipeline_activity` | Immutable audit log for stage moves |
+
+## API: Pipeline Activity
+
+```
+GET /api/pipeline/activity?lead_id=<optional>&limit=50
+```
+Returns array of activity entries, newest first:
+```json
+{
+  "id": "uuid",
+  "lead_id": "uuid",
+  "lead_name": "Jane Doe",
+  "from_stage": "screened",
+  "to_stage": "contacted",
+  "moved_by_id": "uuid",
+  "moved_by_name": "Admin User",
+  "moved_by_email": "admin@recruiteai.com",
+  "moved_at": "2026-05-10T12:34:56.000000"
+}
+```
+
 ## Workflows
 
 - **Start application**: `npm run dev` → port 5000 (frontend)
@@ -112,3 +158,6 @@ npm run build
 - Password hashing: sha256_crypt (bcrypt 4.x incompatible with passlib in this env)
 - SQLite DB auto-creates at `./recruiteai.db` on first run
 - Backend seeds demo data only if `users` table is empty
+- `pipeline_stage` column on `leads` was added via `ALTER TABLE` (not auto-created by SQLAlchemy `create_all`)
+- `pipeline_activity` table IS auto-created by `create_all` (new table, no migration needed)
+- No new pip/npm packages required for this feature — all dependencies were already installed
