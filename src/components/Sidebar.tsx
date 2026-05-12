@@ -28,6 +28,7 @@ import {
   ListChecks,
   SendHorizonal,
   KanbanSquare,
+  MessageSquareMore,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -40,6 +41,7 @@ interface SidebarProps {
 
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
+  { id: 'ai-assistant', label: 'AI Assistant', icon: MessageSquareMore, badge: 'AI' },
   { id: 'resume-screener', label: 'Resume Screener', icon: ScanText, badge: 'AI' },
   { id: 'candidate-matching', label: 'Candidate Match', icon: ListChecks, badge: 'AI' },
   { id: 'outreach-automation', label: 'Email Outreach', icon: SendHorizonal, badge: 'AI' },

@@ -114,6 +114,35 @@ All AI runs locally — no external APIs:
 | `outreach_drafts` | AI-generated personalized emails |
 | `pipeline_activity` | Immutable audit log for stage moves |
 
+## Gemini AI Integration
+
+Uses **Replit AI Integrations** — no personal API key required. Charges billed to Replit credits.
+
+- **Package**: `google-genai` (installed via pip)
+- **Client**: `backend/gemini_client.py` — shared singleton, never cached (tokens expire)
+- **Model**: `gemini-2.5-flash` (fast, cost-effective, capable)
+- **Env vars** (auto-set by Replit, never touch manually):
+  - `AI_INTEGRATIONS_GEMINI_API_KEY`
+  - `AI_INTEGRATIONS_GEMINI_BASE_URL`
+- **Fallback**: All AI endpoints fall back to keyword/regex logic if Gemini is unavailable
+
+### Gemini-Powered Endpoints
+
+| Endpoint | What Gemini does |
+|---|---|
+| `POST /api/resumes/parse` | Extracts name, email, phone, skills, experience, education + writes a candidate summary |
+| `POST /api/resumes/match` | Semantic scoring (not just keyword overlap) + reasoning paragraph |
+| `POST /api/jobs/{id}/match-candidates` | Adds 1-sentence AI insight for top 3 matched candidates |
+| `POST /api/ai/chat` | Natural language Q&A over the full candidate database |
+| `POST /api/ai/candidate-brief/{id}` | Generates a 3-sentence recruiter brief for any candidate |
+
+### Frontend: AI Assistant (`src/sections/AIAssistant.tsx`)
+
+- Chat UI with message bubbles, timestamp, copy button
+- 6 suggested starter questions
+- Streams answers from `/api/ai/chat`
+- "Gemini 2.5 Flash" badge + credit note in footer
+
 ## API: Pipeline Activity
 
 ```

@@ -3,12 +3,14 @@ import os
 import json
 import uuid
 import math
+import logging
 from datetime import datetime, timedelta, timezone
 from typing import Any, Dict, List, Optional
 
 from fastapi import FastAPI, Depends, HTTPException, status, UploadFile, File, Form
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import HTTPBearer, HTTPAuthorizationCredentials
+import backend.gemini_client as gemini
 from pydantic import BaseModel, EmailStr
 from sqlalchemy import (
     create_engine, Column, String, Integer, Float, Boolean,
@@ -1228,62 +1230,148 @@ async def parse_resume(
     _: UserModel = Depends(get_current_user),
 ):
     content_bytes = await file.read()
-
     try:
         text = content_bytes.decode("utf-8", errors="ignore")
     except Exception:
         text = content_bytes.decode("latin-1", errors="ignore")
 
-    skills = extract_skills(text)
-    experience = extract_experience(text)
-    education = extract_education(text)
+    # ── Fallback (keyword-based) ──────────────────────────────────────────────
+    fallback_skills    = extract_skills(text)
+    fallback_exp       = extract_experience(text)
+    fallback_education = extract_education(text)
 
     lines = [l.strip() for l in text.splitlines() if l.strip()]
-    name_guess = lines[0] if lines else "Unknown"
-    if len(name_guess) > 40 or "@" in name_guess or name_guess.startswith("http"):
-        name_guess = "Unknown"
+    fallback_name = lines[0] if lines else "Unknown"
+    if len(fallback_name) > 40 or "@" in fallback_name or fallback_name.startswith("http"):
+        fallback_name = "Unknown"
+    email_match   = re.search(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', text)
+    fallback_email = email_match.group(0) if email_match else ""
+    phone_match   = re.search(r'[\+]?[\d\s\-\(\)]{10,15}', text)
+    fallback_phone = phone_match.group(0).strip() if phone_match else ""
 
-    email_match = re.search(r'[\w.+-]+@[\w-]+\.[a-zA-Z]{2,}', text)
-    email_guess = email_match.group(0) if email_match else ""
+    # ── Gemini-powered extraction ─────────────────────────────────────────────
+    ai_summary = ""
+    if gemini.is_available() and text.strip():
+        try:
+            prompt = f"""You are an expert resume parser. Extract structured data from the resume text below.
+Return ONLY valid JSON with these exact keys:
+{{
+  "name": "Full Name or Unknown",
+  "email": "email@example.com or empty string",
+  "phone": "phone number or empty string",
+  "experience_years": <integer, 0 if fresher>,
+  "education": "PhD | Masters | Bachelors | Diploma | Not specified",
+  "skills": ["skill1", "skill2", ...],
+  "summary": "2-3 sentence professional summary of this candidate highlighting strengths"
+}}
 
-    phone_match = re.search(r'[\+]?[\d\s\-\(\)]{10,15}', text)
-    phone_guess = phone_match.group(0).strip() if phone_match else ""
+Rules:
+- skills: list only real technical/professional skills mentioned (programming languages, frameworks, tools, cloud, methodologies)
+- experience_years: extract the highest mentioned years of experience (number only)
+- summary: be specific, mention actual skills and role level
+
+Resume text (first 3000 chars):
+{text[:3000]}"""
+
+            parsed = gemini.generate_json(prompt)
+            ai_summary = parsed.get("summary", "")
+            return {
+                "skills": parsed.get("skills", fallback_skills) or fallback_skills,
+                "experience": parsed.get("experience_years", fallback_exp),
+                "education": parsed.get("education", fallback_education),
+                "name": parsed.get("name", fallback_name) or fallback_name,
+                "email": parsed.get("email", fallback_email) or fallback_email,
+                "phone": parsed.get("phone", fallback_phone) or fallback_phone,
+                "summary": ai_summary,
+                "text_preview": text[:500],
+                "full_text": text,
+                "ai_powered": True,
+            }
+        except Exception as e:
+            logging.warning(f"Gemini resume parse failed, using fallback: {e}")
 
     return {
-        "skills": skills,
-        "experience": experience,
-        "education": education,
-        "name": name_guess,
-        "email": email_guess,
-        "phone": phone_guess,
+        "skills": fallback_skills,
+        "experience": fallback_exp,
+        "education": fallback_education,
+        "name": fallback_name,
+        "email": fallback_email,
+        "phone": fallback_phone,
+        "summary": "",
         "text_preview": text[:500],
         "full_text": text,
+        "ai_powered": False,
     }
 
 
 @app.post("/api/resumes/match")
 def match_resume_to_job(data: ResumeMatchRequest, _: UserModel = Depends(get_current_user)):
     candidate_skills = extract_skills(data.resume_text)
-    candidate_exp = extract_experience(data.resume_text)
+    candidate_exp    = extract_experience(data.resume_text)
     candidate_education = extract_education(data.resume_text)
+    job_skills   = data.job_skills if data.job_skills else extract_skills(data.job_description)
+    job_exp_min  = data.job_experience_min if data.job_experience_min else extract_experience(data.job_description)
+    fallback     = match_candidate_to_job(candidate_skills, candidate_exp, job_skills, job_exp_min)
 
-    job_skills = data.job_skills if data.job_skills else extract_skills(data.job_description)
-    job_exp_min = data.job_experience_min if data.job_experience_min else extract_experience(data.job_description)
+    if gemini.is_available() and data.resume_text.strip():
+        try:
+            prompt = f"""You are an expert technical recruiter. Score how well this candidate matches the job.
 
-    result = match_candidate_to_job(candidate_skills, candidate_exp, job_skills, job_exp_min)
+JOB REQUIREMENTS:
+- Required skills: {', '.join(job_skills) if job_skills else data.job_description[:500]}
+- Minimum experience: {job_exp_min} years
+- Job description: {data.job_description[:800]}
+
+CANDIDATE RESUME (excerpt):
+{data.resume_text[:2000]}
+
+Return ONLY valid JSON:
+{{
+  "score": <integer 0-100, overall match score>,
+  "skill_match_pct": <integer 0-100>,
+  "exp_score_pct": <integer 0-100>,
+  "matched_skills": ["skill1", ...],
+  "missing_skills": ["skill1", ...],
+  "recommendation": "Strong match — recommend for interview | Partial match — review manually | Weak match — consider other candidates",
+  "reasoning": "2-3 sentence explanation of the score, mentioning specific strengths and gaps"
+}}
+
+Scoring guide: 75-100 = strong match, 50-74 = partial, below 50 = weak."""
+
+            ai = gemini.generate_json(prompt)
+            return {
+                "score": ai.get("score", fallback["score"]),
+                "quality": "High" if ai.get("score", 0) >= 75 else "Medium" if ai.get("score", 0) >= 50 else "Low",
+                "skill_match_pct": ai.get("skill_match_pct", fallback["skill_match_pct"]),
+                "exp_score_pct": ai.get("exp_score_pct", fallback["exp_score_pct"]),
+                "matched_skills": ai.get("matched_skills", fallback["matched_skills"]),
+                "missing_skills": ai.get("missing_skills", fallback["missing_skills"]),
+                "recommendation": ai.get("recommendation", ""),
+                "reasoning": ai.get("reasoning", ""),
+                "candidate_skills": candidate_skills,
+                "candidate_experience": candidate_exp,
+                "candidate_education": candidate_education,
+                "job_skills_required": job_skills,
+                "job_experience_min": job_exp_min,
+                "ai_powered": True,
+            }
+        except Exception as e:
+            logging.warning(f"Gemini match failed, using fallback: {e}")
 
     return {
-        **result,
+        **fallback,
         "candidate_skills": candidate_skills,
         "candidate_experience": candidate_exp,
         "candidate_education": candidate_education,
         "job_skills_required": job_skills,
         "job_experience_min": job_exp_min,
         "recommendation": (
-            "Strong match — recommend for interview" if result["score"] >= 75
-            else "Partial match — review manually" if result["score"] >= 50
+            "Strong match — recommend for interview" if fallback["score"] >= 75
+            else "Partial match — review manually" if fallback["score"] >= 50
             else "Weak match — consider other candidates"
         ),
+        "reasoning": "",
+        "ai_powered": False,
     }
 
 
@@ -1297,7 +1385,7 @@ def match_candidates_to_job(
     if not job:
         raise HTTPException(status_code=404, detail="Job not found")
 
-    leads = db.query(LeadModel).all()
+    leads   = db.query(LeadModel).all()
     results = []
 
     for lead in leads:
@@ -1317,7 +1405,100 @@ def match_candidates_to_job(
         })
 
     results.sort(key=lambda x: x["match_score"], reverse=True)
+
+    # Use Gemini to write a brief insight for the top 3 candidates only
+    ai_insights: Dict[str, str] = {}
+    if gemini.is_available() and results:
+        top3 = results[:3]
+        for cand in top3:
+            try:
+                prompt = f"""In one sentence, explain why {cand['name']} (score {cand['match_score']}/100) is a {cand['match_quality'].lower()} match for the {job.title} role. Mention 1-2 specific skills."""
+                ai_insights[cand["id"]] = gemini.generate(prompt).strip().strip('"')
+            except Exception:
+                pass
+
+    for r in results:
+        r["ai_insight"] = ai_insights.get(r["id"], "")
+
     return {"job": job_to_dict(job), "candidates": results, "total": len(results)}
+
+
+# ─── AI Chat & Candidate Brief ────────────────────────────────────────────────
+
+class AIChatRequest(BaseModel):
+    question: str
+
+
+@app.post("/api/ai/chat")
+def ai_chat(
+    req: AIChatRequest,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Natural language query over the candidate database."""
+    if not gemini.is_available():
+        raise HTTPException(status_code=503, detail="AI not configured")
+    if not req.question.strip():
+        raise HTTPException(status_code=400, detail="Question is required")
+
+    leads = db.query(LeadModel).all()
+    candidate_list = "\n".join(
+        f"- {l.name} | email: {l.email} | score: {l.score} | skills: {', '.join(l.skills or [])} | "
+        f"experience: {l.experience}y | stage: {l.pipeline_stage or 'screened'} | quality: {l.quality}"
+        for l in leads
+    )
+
+    prompt = f"""You are an AI recruitment assistant for RecruitAI. Answer the recruiter's question using the candidate data below.
+Be concise, factual, and helpful. If listing candidates, include their name and score.
+
+CANDIDATE DATABASE ({len(leads)} candidates):
+{candidate_list}
+
+RECRUITER QUESTION: {req.question}
+
+Answer:"""
+
+    try:
+        answer = gemini.generate(prompt).strip()
+        return {"answer": answer, "ai_powered": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
+
+
+@app.post("/api/ai/candidate-brief/{lead_id}")
+def ai_candidate_brief(
+    lead_id: str,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Generate a 3-line AI recruiter brief for a single candidate."""
+    if not gemini.is_available():
+        raise HTTPException(status_code=503, detail="AI not configured")
+
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    prompt = f"""Write a concise 3-line recruiter brief for this candidate. Be specific and professional.
+
+Candidate profile:
+- Name: {lead.name}
+- Skills: {', '.join(lead.skills or [])}
+- Experience: {lead.experience} years
+- AI Score: {lead.score}/100 ({lead.quality} quality)
+- Pipeline stage: {lead.pipeline_stage or 'screened'}
+- Resume excerpt: {(lead.resume_text or '')[:600]}
+
+Write exactly 3 sentences:
+1. Who they are and their strongest technical skills
+2. Their experience level and standout qualities
+3. Recommendation (suitable for what type of role/company)"""
+
+    try:
+        brief = gemini.generate(prompt).strip()
+        return {"brief": brief, "lead_id": lead_id, "ai_powered": True}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"AI error: {str(e)}")
 
 
 # ─── Outreach Stubs ───────────────────────────────────────────────────────────

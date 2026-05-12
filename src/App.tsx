@@ -31,6 +31,7 @@ import { ResumeScreener } from './sections/ResumeScreener';
 import { CandidateMatching } from './sections/CandidateMatching';
 import { OutreachAutomation } from './sections/OutreachAutomation';
 import { CandidatePipeline } from './sections/CandidatePipeline';
+import { AIAssistant } from './sections/AIAssistant';
 
 type Section =
   | 'dashboard'
@@ -60,7 +61,8 @@ type Section =
   | 'resume-screener'
   | 'candidate-matching'
   | 'outreach-automation'
-  | 'candidate-pipeline';
+  | 'candidate-pipeline'
+  | 'ai-assistant';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -142,6 +144,8 @@ function App() {
         return <OutreachAutomation />;
       case 'candidate-pipeline':
         return <CandidatePipeline />;
+      case 'ai-assistant':
+        return <AIAssistant />;
       default:
         return <DashboardOverview />;
     }
@@ -177,6 +181,7 @@ function App() {
       'candidate-matching': 'AI Candidate Matching',
       'outreach-automation': 'Automated Email Outreach',
       'candidate-pipeline': 'Candidate Pipeline Board',
+      'ai-assistant': 'AI Recruitment Assistant',
     };
     return titles[activeSection] || 'Dashboard';
   };
