@@ -1,0 +1,68 @@
+You are working on the "RecruiteAI" project that is already present in this Replit environment. The project is a recruitment platform with a React+TypeScript frontend (Vite) and a Python FastAPI backend, plus an SQLite database and multiple planning/audit docs. However, the current code is **not functional**: frontend uses hardcoded mock data, there is no authentication, no AI features, and backend endpoints are incomplete. The goal is to **fix, complete, and turn this into a fully working, AI-powered recruitment platform** by building upon the existing code.
+
+Your task: **Analyze the current project, identify exactly what is missing/partially done, and then implement everything required to make it production-ready.** Do NOT start from scratch — enhance, refactor, and complete the existing code.
+
+Execute these steps in order:
+
+### 1. Deep Analysis & Planning
+- Read the entire codebase: frontend (`src/`), backend (`backend/`), all configuration files, and **all existing documentation/audit reports** (especially `FRONTEND_AUDIT_REPORT.md`, `BACKEND_SETUP_COMPLETE.md`, `TESTING_GUIDE.md`, etc.). 
+- Create a new file `COMPLETION_PLAN.md` where you list every feature/module that is:
+  - Missing
+  - Incomplete / partially implemented
+  - Documented but not built
+- Use the existing audit reports as your primary checklist and note what they already identified as missing.
+
+### 2. Frontend-Backend Integration & Core Stabilization
+- Remove ALL mock data from React components. Replace with real API calls using Axios. Create a centralized API service (`src/services/api.ts`).
+- Install and configure **TanStack Query (React Query)** for server state, caching, and error handling. Add loading skeletons and React error boundaries.
+- Set up **React Router** with proper route definitions for all pages (Dashboard, Candidates, Jobs, Pipeline, AI Assistant, Settings, etc.). Ensure navigation works.
+- **Build full authentication**:
+  - Backend: implement `/auth/register`, `/auth/login`, JWT access+refresh token flow, password hashing, user model with roles (admin, recruiter, candidate). Add middleware for protected routes and role-based access.
+  - Frontend: create login/register pages, AuthContext, automatic token refresh, route guards (redirect if not logged in).
+- **Implement form validation** across all forms using React Hook Form + Zod (client-side) and Pydantic (backend). No form should accept raw, unvalidated input.
+- Fix any truncated/partially written backend endpoints (e.g., the pipeline stage update endpoint). Ensure all existing routes return proper responses.
+- **Replace SQLite** with PostgreSQL (Replit has PostgreSQL support). Set up Alembic migrations and never commit the database file. Remove the `recruiteai.db` file from the repo.
+- Create a `Dockerfile` for both frontend and backend, plus a `docker-compose.yml` that runs frontend, backend, and PostgreSQL together. Create `.env.example` with all required environment variables.
+
+### 3. AI Recruitment Features (The Core)
+Now build the AI-powered features. If an API key is needed, use a variable `OPENAI_API_KEY` from environment. Assume it's available.
+
+- **Job Description Generator (New)**:
+  - Create an endpoint `POST /api/ai/job-description-generator` that accepts a plain English description of a role from the recruiter.
+  - Use the Gemini API (or OpenAI as fallback) to generate a full, polished job posting with: job title, responsibilities, required skills, preferred experience, qualifications, and company culture blurbs.
+  - On the frontend, add a new form inside the "Job Intelligence" section/page. The recruiter types a short description like "I need a senior React developer for a fintech startup". The response should be a beautifully formatted job description that can be saved, edited, and published as a job listing.
+  - Ensure the generated description is stored in the database and linked to a job posting.
+
+- **Resume Parsing**: Endpoint to upload a PDF/DOCX resume. Extract text with PyPDF2/python-docx, then call OpenAI API to output structured JSON (name, email, skills, experience, education). Store in DB and generate embeddings using `text-embedding-ada-002`. Store embeddings in a vector DB (use Chroma or pgvector; if pgvector is easier in PostgreSQL, use that).
+- **Job Description Analysis**: Endpoint to analyze a JD and extract required skills, experience, keywords. Store same structure and embedding.
+- **Candidate-Job Matching**: Calculate cosine similarity between candidate and job embeddings. Show a match score and skill gap analysis (missing skills, matching skills).
+- **AI Recruiter Chat**: A chat interface where recruiters can ask questions like "Top 3 candidates for Senior React role". Use OpenAI function calling to convert natural language to DB queries (filter by skill, experience, match score) and return summarized results.
+- **Pipeline Management**: Implement a drag-and-drop Kanban board for candidate stages (Sourced, Screening, Interview, Offer, Hired). Moving a card triggers an API update. Optionally, suggest AI-generated email drafts or schedule suggestions when stage changes.
+- **Interview Scheduler**: Basic slot management with AI-suggested time slots (mock interviewer availability for now). Integrate with a mock email service (like Resend or console log for now) to send calendar invites.
+- **Email Automation**: Predefined templates (invite, rejection, offer) that can be populated and sent via a mail API (mock implementation acceptable, but structured).
+
+### 4. SaaS Readiness & Security
+- Add **multi-tenancy**: Organization model. Every user belongs to an org; all data (candidates, jobs, pipelines) is scoped by org.
+- Implement **role-based access control**: Admin, Recruiter, Hiring Manager with different permissions (e.g., only admin can manage billing, only recruiter can view all candidates, etc.).
+- Add basic **subscription logic**: a `subscription` table with plan limits (e.g., free users can do 10 AI matches/month). Gate AI features based on plan usage.
+- **Security**: Add rate limiting (SlowAPI), CORS strict settings, proper environment variable management, file upload validation (size/type), input sanitization, and helmet equivalents for FastAPI.
+
+### 5. Testing & Quality
+- Write **backend tests** using Pytest for all endpoints, services, and utilities. Aim for >80% coverage. Add test database configuration.
+- Write **frontend tests** with Vitest + React Testing Library for components, hooks, and form validation.
+- Write **end-to-end tests** with Playwright covering the complete user flow: signup → create job → upload resume → view match → move candidate through pipeline.
+- Create **AI accuracy tests**: a script that tests resume parsing against a known set of sample resumes and validates the extracted JSON structure.
+
+### 6. Documentation & Final Touches
+- **Update README.md**: replace the default Vite text with a full project overview, tech stack, architecture diagram (Mermaid), setup instructions (using Docker Compose), screenshots, and contribution guide.
+- Ensure FastAPI Swagger docs (`/docs`) are accessible and well-documented with docstrings and example responses.
+- Create a `DEPLOYMENT.md` with steps to deploy using Docker and environment variables.
+- Update any outdated docs (like `BACKEND_SETUP_COMPLETE.md` which might still mention Node.js — either correct it or remove it, ensuring it reflects the actual Python FastAPI backend).
+
+### Important Rules
+- Build on top of existing code. Never delete a working feature unless absolutely necessary and explain why.
+- Do not leave any mock data or placeholder text in the UI. If something is not yet ready, show a "Coming Soon" card but ensure all actual flows are real.
+- Use the existing audit reports as a to-do list; mark items as `[x]` in the reports once they are implemented.
+- The final project must be fully runnable: `docker-compose up` should spin up everything and the app should be usable immediately.
+
+Start now by analyzing the project and creating `COMPLETION_PLAN.md`. Then proceed with implementation step by step. At the end, provide a summary of what was done, what tests pass, and any remaining issues.
