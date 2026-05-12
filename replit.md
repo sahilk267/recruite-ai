@@ -1,7 +1,7 @@
 # RecruitAI - AI-Powered Recruitment SaaS
 
 ## Overview
-A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real AI-powered resume parsing, candidate scoring, job-candidate matching, plus a complete recruitment management dashboard with Kanban pipeline, search/filter, and full audit trail.
+A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real Gemini-powered AI for resume parsing, candidate scoring, semantic job matching, a natural language AI assistant, and a complete recruitment management dashboard with Kanban pipeline, search/filter, and full audit trail.
 
 ## Architecture
 
@@ -21,20 +21,23 @@ A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (fr
 - **Auth**: JWT tokens via python-jose + sha256_crypt password hashing (passlib)
 - **Port**: 8000 (proxied from Vite at /api → localhost:8000)
 - **Entry point**: `backend/main.py`
+- **AI client**: `backend/gemini_client.py` — shared Gemini singleton
 
 ## Project Structure
 
 ```
 src/
-  App.tsx              - Main app with section routing (25 sections)
+  App.tsx              - Main app with section routing (26 sections)
   main.tsx             - Entry point
   index.css            - Global styles + Tailwind
   components/          - Header, Sidebar, LoginModal, ui/ (shadcn)
   context/             - AuthContext for JWT state management
-  sections/            - All 25 page sections (Dashboard, Jobs, Leads, etc.)
-    CandidatePipeline.tsx - Kanban board, search/filter bar, activity log
+  sections/
+    AIAssistant.tsx     - Gemini chat UI for natural language candidate queries
+    CandidatePipeline.tsx - Kanban board, search/filter bar, activity log, AI brief in drawer
     ResumeScreener.tsx  - AI resume parser + job matching
     CandidateMatching.tsx - AI candidate ranking per job
+    ... (22 more sections)
   services/            - API client + service layer
   types/               - TypeScript type definitions
 
@@ -49,10 +52,13 @@ backend/
     - Deals: GET/POST/PATCH/DELETE /api/deals + POST /api/deals/{id}/close
     - Payments: GET/POST /api/payments + POST /api/payments/{id}/record
     - Templates: GET/POST /api/templates
-    - AI: POST /api/resumes/parse (skill extraction from uploaded file)
-    - AI: POST /api/resumes/match (candidate vs job scoring)
-    - AI: POST /api/jobs/{id}/match-candidates (rank all candidates for a job)
+    - AI: POST /api/resumes/parse (Gemini skill extraction + candidate summary)
+    - AI: POST /api/resumes/match (Gemini semantic scoring + reasoning)
+    - AI: POST /api/jobs/{id}/match-candidates (rank all + Gemini insights for top 3)
+    - AI: POST /api/ai/chat (NL query over candidate database)
+    - AI: POST /api/ai/candidate-brief/{id} (3-sentence recruiter brief)
     - Stats: GET /api/stats (real dashboard stats from DB)
+  gemini_client.py    - Shared Gemini AI client (singleton, auto-fallback)
 recruiteai.db          - SQLite database (auto-created and seeded on startup)
 ```
 
@@ -81,23 +87,60 @@ The database is seeded automatically on first startup with:
 - 4 payments (3 paid)
 - 2 email templates
 
-## AI Features
+## Gemini AI Integration
 
-All AI runs locally — no external APIs:
+Uses **Replit AI Integrations** — no personal API key required. Charges billed to Replit credits.
 
-1. **Skill Extraction**: Keyword matching against 200+ tech skills database (Python, React, AWS, etc.)
-2. **Experience Detection**: Regex patterns on resume text ("5 years experience", "3+ yrs", etc.)
-3. **Lead Scoring**: Weighted algorithm — skill count (55 pts) + experience (35 pts) + base (10 pts)
-4. **Job-Candidate Matching**: Skill intersection (65%) + experience fit (30%) + base (5%)
-5. **Education Detection**: PhD/Masters/Bachelors/Diploma detection from resume text
+- **Package**: `google-genai` (installed via pip)
+- **Client**: `backend/gemini_client.py` — shared singleton, never cached (tokens expire)
+- **Model**: `gemini-2.5-flash` (fast, cost-effective, capable)
+- **Env vars** (auto-set by Replit, never touch manually):
+  - `AI_INTEGRATIONS_GEMINI_API_KEY`
+  - `AI_INTEGRATIONS_GEMINI_BASE_URL`
+- **Fallback**: All AI endpoints fall back to keyword/regex logic if Gemini is unavailable — nothing breaks
+
+### Gemini-Powered Endpoints
+
+| Endpoint | What Gemini does |
+|---|---|
+| `POST /api/resumes/parse` | Extracts name, email, phone, skills, experience, education + writes a 2-3 sentence candidate summary |
+| `POST /api/resumes/match` | Semantic skill+experience scoring (0-100) + reasoning paragraph explaining the match |
+| `POST /api/jobs/{id}/match-candidates` | Keyword bulk-ranks all candidates, then Gemini adds a 1-sentence insight for the top 3 |
+| `POST /api/ai/chat` | Natural language Q&A over the full live candidate database |
+| `POST /api/ai/candidate-brief/{id}` | 3-sentence recruiter-ready brief for any candidate |
+
+### Frontend AI Sections
+
+**AI Assistant** (`src/sections/AIAssistant.tsx`)
+- Chat UI: user/bot message bubbles with timestamps, copy button per message
+- 6 curated starter questions shown on first load
+- Sends to `/api/ai/chat` — Gemini reads the full candidate DB and answers in natural language
+- Footer: credit note (billed to Replit AI credits)
+- Sidebar label: "AI Assistant" with AI badge
+
+**AI Brief in Pipeline Drawer** (`src/sections/CandidatePipeline.tsx` → `CandidateDrawer`)
+- "Generate AI Brief" button inside every candidate's slide-in drawer
+- One click → Gemini writes a 3-sentence professional recruiter brief
+- Copy button to clipboard, Regenerate button to refresh
+- Loading state with animated spinner
+
+**Resume Screener** (`src/sections/ResumeScreener.tsx`)
+- Upload any resume file → Gemini parses it (name, email, skills, experience, education, summary)
+- Falls back to keyword extraction if Gemini unavailable
+- Response includes `ai_powered: true/false` flag
+
+**Candidate Matching** (`src/sections/CandidateMatching.tsx`)
+- Select a job → ranks all candidates
+- Top 3 get Gemini-written `ai_insight` sentences
+- Score, quality, matched/missing skills shown per candidate
 
 ## Pipeline Board Features
 
 - **Kanban view**: 5 stages — Screened → Contacted → Interviewing → Offer → Hired
 - **Drag & drop**: Move candidates between columns; persisted to DB instantly
-- **Candidate drawer**: Slide-in detail panel with full profile, AI score, pipeline journey, move buttons
-- **Search & filter bar**: Filter by name/email, score range (High/Medium/Low), skill, and stage
-- **Activity log**: Full audit trail of every stage move — who moved whom, from/to stage, timestamp
+- **Candidate drawer**: Slide-in detail panel with full profile, AI score breakdown, pipeline journey, move buttons, **AI Brief generator**, resume text
+- **Search & filter bar**: Filter by name/email, score range (High/Medium/Low), skill dropdown, stage dropdown — with active chip row and count
+- **Activity log**: Full immutable audit trail — who moved whom, from/to stage, timestamp with relative display
 
 ## Database Tables
 
@@ -114,51 +157,40 @@ All AI runs locally — no external APIs:
 | `outreach_drafts` | AI-generated personalized emails |
 | `pipeline_activity` | Immutable audit log for stage moves |
 
-## Gemini AI Integration
+## API: Key Response Shapes
 
-Uses **Replit AI Integrations** — no personal API key required. Charges billed to Replit credits.
-
-- **Package**: `google-genai` (installed via pip)
-- **Client**: `backend/gemini_client.py` — shared singleton, never cached (tokens expire)
-- **Model**: `gemini-2.5-flash` (fast, cost-effective, capable)
-- **Env vars** (auto-set by Replit, never touch manually):
-  - `AI_INTEGRATIONS_GEMINI_API_KEY`
-  - `AI_INTEGRATIONS_GEMINI_BASE_URL`
-- **Fallback**: All AI endpoints fall back to keyword/regex logic if Gemini is unavailable
-
-### Gemini-Powered Endpoints
-
-| Endpoint | What Gemini does |
-|---|---|
-| `POST /api/resumes/parse` | Extracts name, email, phone, skills, experience, education + writes a candidate summary |
-| `POST /api/resumes/match` | Semantic scoring (not just keyword overlap) + reasoning paragraph |
-| `POST /api/jobs/{id}/match-candidates` | Adds 1-sentence AI insight for top 3 matched candidates |
-| `POST /api/ai/chat` | Natural language Q&A over the full candidate database |
-| `POST /api/ai/candidate-brief/{id}` | Generates a 3-sentence recruiter brief for any candidate |
-
-### Frontend: AI Assistant (`src/sections/AIAssistant.tsx`)
-
-- Chat UI with message bubbles, timestamp, copy button
-- 6 suggested starter questions
-- Streams answers from `/api/ai/chat`
-- "Gemini 2.5 Flash" badge + credit note in footer
-
-## API: Pipeline Activity
-
+### GET /api/leads
+```json
+{ "data": [...], "total": 10, "page": 1, "pageSize": 50 }
 ```
-GET /api/pipeline/activity?lead_id=<optional>&limit=50
+
+### POST /api/ai/chat
+```json
+{ "answer": "The top 3 candidates by score are...", "ai_powered": true }
 ```
-Returns array of activity entries, newest first:
+
+### POST /api/ai/candidate-brief/{id}
+```json
+{ "brief": "Jane is a senior Python developer...", "lead_id": "uuid", "ai_powered": true }
+```
+
+### POST /api/resumes/match
 ```json
 {
-  "id": "uuid",
-  "lead_id": "uuid",
-  "lead_name": "Jane Doe",
-  "from_stage": "screened",
-  "to_stage": "contacted",
-  "moved_by_id": "uuid",
-  "moved_by_name": "Admin User",
-  "moved_by_email": "admin@recruiteai.com",
+  "score": 98, "quality": "High", "skill_match_pct": 100,
+  "matched_skills": ["Python", "FastAPI"], "missing_skills": [],
+  "recommendation": "Strong match — recommend for interview",
+  "reasoning": "Candidate exceeds all requirements...",
+  "ai_powered": true
+}
+```
+
+### GET /api/pipeline/activity
+```json
+{
+  "id": "uuid", "lead_id": "uuid", "lead_name": "Jane Doe",
+  "from_stage": "screened", "to_stage": "contacted",
+  "moved_by_name": "Admin User", "moved_by_email": "admin@recruiteai.com",
   "moved_at": "2026-05-10T12:34:56.000000"
 }
 ```
@@ -189,4 +221,6 @@ npm run build
 - Backend seeds demo data only if `users` table is empty
 - `pipeline_stage` column on `leads` was added via `ALTER TABLE` (not auto-created by SQLAlchemy `create_all`)
 - `pipeline_activity` table IS auto-created by `create_all` (new table, no migration needed)
-- No new pip/npm packages required for this feature — all dependencies were already installed
+- Login response key is `token` (not `access_token`)
+- Gemini client: `import backend.gemini_client as gemini` — module path because uvicorn runs from project root
+- All Gemini calls have try/except fallback — never crashes if AI unavailable

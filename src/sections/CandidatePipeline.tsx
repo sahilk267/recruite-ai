@@ -26,6 +26,9 @@ import {
   History,
   ChevronUp,
   RefreshCw,
+  Sparkles,
+  Loader2,
+  Copy,
 } from 'lucide-react';
 import { Card, CardContent } from '@/components/ui/card';
 import { Input } from '@/components/ui/input';
@@ -526,6 +529,29 @@ function CandidateDrawer({
     candidate.experience >= 1 ? 12 : 5;
   const baseScore = 10;
 
+  const [brief, setBrief] = useState('');
+  const [briefLoading, setBriefLoading] = useState(false);
+  const [briefCopied, setBriefCopied] = useState(false);
+
+  async function generateBrief() {
+    setBriefLoading(true);
+    setBrief('');
+    try {
+      const res = await apiClient.post(`/api/ai/candidate-brief/${candidate.id}`);
+      setBrief(res.data.brief);
+    } catch {
+      toast.error('Could not generate AI brief. Please try again.');
+    } finally {
+      setBriefLoading(false);
+    }
+  }
+
+  function copyBrief() {
+    navigator.clipboard.writeText(brief);
+    setBriefCopied(true);
+    setTimeout(() => setBriefCopied(false), 1500);
+  }
+
   // Close on Escape
   useEffect(() => {
     function onKey(e: KeyboardEvent) {
@@ -717,6 +743,57 @@ function CandidateDrawer({
                 );
               })}
             </div>
+          </div>
+
+          {/* AI Recruiter Brief */}
+          <div className="p-5 border-b border-white/8">
+            <div className="flex items-center justify-between mb-3">
+              <div className="flex items-center gap-2">
+                <Sparkles className="w-3.5 h-3.5 text-violet-400" />
+                <p className="text-[10px] font-semibold text-zinc-500 uppercase tracking-wider">AI Recruiter Brief</p>
+              </div>
+              {brief && (
+                <button
+                  onClick={copyBrief}
+                  className="flex items-center gap-1 text-[10px] text-zinc-500 hover:text-zinc-300 transition-colors"
+                >
+                  {briefCopied
+                    ? <><Check className="w-3 h-3 text-emerald-400" /><span className="text-emerald-400">Copied</span></>
+                    : <><Copy className="w-3 h-3" />Copy</>
+                  }
+                </button>
+              )}
+            </div>
+
+            {!brief && !briefLoading && (
+              <button
+                onClick={generateBrief}
+                className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-xl border border-dashed border-violet-500/30 bg-violet-500/5 text-violet-400 text-xs font-semibold hover:bg-violet-500/10 hover:border-violet-500/50 transition-all group"
+              >
+                <Sparkles className="w-3.5 h-3.5 group-hover:scale-110 transition-transform" />
+                Generate AI Brief
+              </button>
+            )}
+
+            {briefLoading && (
+              <div className="flex items-center justify-center gap-2 py-4 text-zinc-500">
+                <Loader2 className="w-4 h-4 animate-spin text-violet-400" />
+                <span className="text-xs">Gemini is writing a brief…</span>
+              </div>
+            )}
+
+            {brief && !briefLoading && (
+              <div className="bg-violet-500/8 border border-violet-500/20 rounded-xl p-3.5 space-y-2">
+                <p className="text-xs text-zinc-300 leading-relaxed">{brief}</p>
+                <button
+                  onClick={generateBrief}
+                  className="flex items-center gap-1.5 text-[10px] text-violet-500 hover:text-violet-300 transition-colors mt-1"
+                >
+                  <RefreshCw className="w-2.5 h-2.5" />
+                  Regenerate
+                </button>
+              </div>
+            )}
           </div>
 
           {/* Resume text */}
