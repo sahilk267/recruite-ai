@@ -202,6 +202,64 @@ class PipelineActivityModel(Base):
     moved_at = Column(DateTime, default=lambda: datetime.now(timezone.utc), index=True)
 
 
+# ─── New Models ───────────────────────────────────────────────────────────────
+
+class OrganizationModel(Base):
+    """Multi-tenancy: every user/job/lead belongs to an org."""
+    __tablename__ = "organizations"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    slug = Column(String, unique=True, nullable=False, index=True)
+    plan = Column(String, default="free")          # free | pro | enterprise
+    ai_calls_used = Column(Integer, default=0)     # rolling monthly counter
+    ai_calls_limit = Column(Integer, default=50)   # free=50, pro=1000, enterprise=unlimited(-1)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class InterviewSlotModel(Base):
+    """Interview scheduling."""
+    __tablename__ = "interview_slots"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=False)
+    job_id = Column(String, ForeignKey("jobs.id"), nullable=True)
+    interviewer_name = Column(String, default="")
+    interviewer_email = Column(String, default="")
+    scheduled_at = Column(DateTime, nullable=True)
+    duration_minutes = Column(Integer, default=45)
+    status = Column(String, default="scheduled")  # scheduled | confirmed | cancelled | completed
+    notes = Column(Text, default="")
+    meeting_link = Column(String, default="")
+    ai_suggested = Column(Boolean, default=False)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class EmailLogModel(Base):
+    """Audit log for every sent email."""
+    __tablename__ = "email_logs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    to_email = Column(String, nullable=False)
+    to_name = Column(String, default="")
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    template_id = Column(String, nullable=True)
+    lead_id = Column(String, nullable=True)
+    sent_by_id = Column(String, nullable=True)
+    status = Column(String, default="sent")       # sent | failed | bounced
+    error_message = Column(Text, default="")
+    sent_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class AiUsageLogModel(Base):
+    """Per-user AI call log for rate-limiting and billing."""
+    __tablename__ = "ai_usage_logs"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    user_id = Column(String, ForeignKey("users.id"), nullable=False)
+    endpoint = Column(String, nullable=False)
+    tokens_used = Column(Integer, default=0)
+    cost_usd = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
 # ─── Create Tables ─────────────────────────────────────────────────────────────
 
 Base.metadata.create_all(bind=engine)
@@ -2018,11 +2076,705 @@ def seed_database():
 @app.on_event("startup")
 def startup_event():
     seed_database()
+    _seed_org()
+
+
+def _seed_org():
+    """Ensure a default org exists for the demo account."""
+    db = SessionLocal()
+    try:
+        if db.query(OrganizationModel).count() == 0:
+            org = OrganizationModel(
+                id=str(uuid.uuid4()),
+                name="RecruitAI Demo",
+                slug="recruiteai-demo",
+                plan="pro",
+                ai_calls_limit=1000,
+            )
+            db.add(org)
+            db.commit()
+    except Exception:
+        db.rollback()
+    finally:
+        db.close()
 
 
 @app.get("/health")
 def health():
-    return {"status": "ok", "service": "RecruitAI API"}
+    """Health check."""
+    return {"status": "ok", "service": "RecruitAI API", "version": "2.0.0"}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T001 — Job Description Generator
+# ════════════════════════════════════════════════════════════════════════════════
+
+class JobDescGeneratorRequest(BaseModel):
+    description: str                   # plain-English role description
+    company: str = "Our Company"
+    location: str = "Remote"
+    save_as_job: bool = False          # if True, persist to jobs table
+
+
+class JobDescGeneratorResponse(BaseModel):
+    title: str
+    summary: str
+    responsibilities: List[str]
+    required_skills: List[str]
+    preferred_skills: List[str]
+    experience_min: int
+    education: str
+    salary_range: str
+    full_description: str
+    ai_powered: bool
+    job_id: Optional[str] = None
+
+
+@app.post("/api/ai/job-description-generator", response_model=JobDescGeneratorResponse)
+def generate_job_description(
+    req: JobDescGeneratorRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Generate a polished job posting from a plain-English description.
+    Uses Gemini when available, falls back to a structured template.
+    """
+    if not req.description.strip():
+        raise HTTPException(status_code=400, detail="Description is required")
+
+    # ── Gemini path ───────────────────────────────────────────────────────────
+    if gemini.is_available():
+        try:
+            prompt = f"""You are an expert HR writer. Generate a complete, professional job posting from the recruiter's description below.
+
+Recruiter's input: "{req.description}"
+Company: {req.company}
+Location: {req.location}
+
+Return ONLY valid JSON with exactly these keys:
+{{
+  "title": "Job Title",
+  "summary": "2-sentence company/role overview",
+  "responsibilities": ["responsibility 1", "responsibility 2", ...],
+  "required_skills": ["Skill1", "Skill2", ...],
+  "preferred_skills": ["Skill1", ...],
+  "experience_min": <integer years>,
+  "education": "Bachelor's degree in Computer Science or equivalent",
+  "salary_range": "e.g. ₹15L–₹25L / $80k–$120k",
+  "full_description": "Complete multi-paragraph job description text (400-600 words)"
+}}
+
+Rules:
+- responsibilities: 5-7 bullet points
+- required_skills: 5-8 real technical/professional skills
+- preferred_skills: 3-5 bonus skills
+- full_description: formal tone, structured with Overview / Responsibilities / Requirements / What We Offer sections
+- salary_range: infer from role seniority and location if not mentioned"""
+
+            parsed = gemini.generate_json(prompt)
+            result = JobDescGeneratorResponse(
+                title=parsed.get("title", "Software Engineer"),
+                summary=parsed.get("summary", ""),
+                responsibilities=parsed.get("responsibilities", []),
+                required_skills=parsed.get("required_skills", []),
+                preferred_skills=parsed.get("preferred_skills", []),
+                experience_min=int(parsed.get("experience_min", 2)),
+                education=parsed.get("education", "Bachelor's degree or equivalent"),
+                salary_range=parsed.get("salary_range", "Negotiable"),
+                full_description=parsed.get("full_description", ""),
+                ai_powered=True,
+            )
+        except Exception as e:
+            logging.warning(f"Gemini job-desc-gen failed: {e}")
+            result = _fallback_job_desc(req)
+    else:
+        result = _fallback_job_desc(req)
+
+    # ── Optionally save to jobs table ────────────────────────────────────────
+    if req.save_as_job:
+        job = JobModel(
+            id=str(uuid.uuid4()),
+            title=result.title,
+            company=req.company,
+            location=req.location,
+            description=result.full_description,
+            skills=result.required_skills,
+            experience_min=result.experience_min,
+            status="active",
+            source="ai-generated",
+        )
+        db.add(job)
+        db.commit()
+        result.job_id = job.id
+
+    return result
+
+
+def _fallback_job_desc(req: JobDescGeneratorRequest) -> JobDescGeneratorResponse:
+    """Keyword-based fallback when Gemini is unavailable."""
+    desc_lower = req.description.lower()
+    skills = extract_skills(req.description)
+    exp = extract_experience(req.description)
+
+    # Guess title
+    title = "Software Engineer"
+    for kw, t in [
+        ("react", "Frontend Engineer"), ("python", "Python Developer"),
+        ("data science", "Data Scientist"), ("ml", "ML Engineer"),
+        ("devops", "DevOps Engineer"), ("fullstack", "Full Stack Developer"),
+        ("backend", "Backend Developer"), ("frontend", "Frontend Developer"),
+        ("manager", "Engineering Manager"), ("product", "Product Manager"),
+    ]:
+        if kw in desc_lower:
+            title = t
+            break
+
+    return JobDescGeneratorResponse(
+        title=title,
+        summary=f"We are looking for a talented {title} to join our team at {req.company}.",
+        responsibilities=[
+            f"Build and maintain {title.lower()} solutions",
+            "Collaborate with cross-functional teams",
+            "Participate in code reviews and technical planning",
+            "Write clean, testable, and well-documented code",
+            "Contribute to system design and architecture decisions",
+        ],
+        required_skills=skills[:8] if skills else ["Communication", "Problem Solving"],
+        preferred_skills=skills[8:12] if len(skills) > 8 else [],
+        experience_min=max(exp, 1),
+        education="Bachelor's degree in Computer Science or equivalent",
+        salary_range="Negotiable",
+        full_description=(
+            f"## {title}\n\n"
+            f"**Company:** {req.company} | **Location:** {req.location}\n\n"
+            f"### Overview\n{req.description}\n\n"
+            f"### Responsibilities\n" +
+            "\n".join(f"- {r}" for r in [
+                "Design, develop, and maintain high-quality software",
+                "Collaborate with product and design teams",
+                "Participate in Agile ceremonies (standups, sprints, retrospectives)",
+                "Write unit and integration tests",
+                "Contribute to technical documentation",
+            ]) +
+            f"\n\n### Requirements\n- {exp}+ years of relevant experience\n" +
+            "\n".join(f"- {s}" for s in (skills[:6] if skills else ["Strong communication skills"])) +
+            "\n\n### What We Offer\n- Competitive salary and equity\n- Remote-friendly work environment\n- Growth opportunities"
+        ),
+        ai_powered=False,
+    )
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T003 — Organizations & RBAC
+# ════════════════════════════════════════════════════════════════════════════════
+
+ROLE_PERMISSIONS: Dict[str, List[str]] = {
+    "admin":           ["*"],
+    "recruiter":       ["leads:read", "leads:write", "jobs:read", "pipeline:write", "interviews:write"],
+    "hiring_manager":  ["leads:read", "jobs:read", "pipeline:read", "interviews:read"],
+    "candidate":       [],
+}
+
+
+def require_role(*roles: str):
+    """Dependency that checks the current user has one of the given roles."""
+    def _check(current_user: UserModel = Depends(get_current_user)):
+        if current_user.role not in roles and current_user.role != "admin":
+            raise HTTPException(
+                status_code=403,
+                detail=f"Role '{current_user.role}' is not permitted. Required: {list(roles)}"
+            )
+        return current_user
+    return _check
+
+
+class OrgUpdateRequest(BaseModel):
+    name: Optional[str] = None
+    plan: Optional[str] = None
+
+
+@app.get("/api/org")
+def get_org(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Return the default org (single-org mode for now)."""
+    org = db.query(OrganizationModel).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="No organisation found")
+    return {
+        "id": org.id,
+        "name": org.name,
+        "slug": org.slug,
+        "plan": org.plan,
+        "ai_calls_used": org.ai_calls_used,
+        "ai_calls_limit": org.ai_calls_limit,
+        "ai_calls_remaining": max(0, org.ai_calls_limit - org.ai_calls_used) if org.ai_calls_limit >= 0 else -1,
+        "created_at": org.created_at.isoformat() if org.created_at else None,
+    }
+
+
+@app.patch("/api/org")
+def update_org(
+    data: OrgUpdateRequest,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(require_role("admin")),
+):
+    """Update org name or plan (admin only)."""
+    org = db.query(OrganizationModel).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="No organisation found")
+    if data.name:
+        org.name = data.name
+    if data.plan:
+        limits = {"free": 50, "pro": 1000, "enterprise": -1}
+        org.plan = data.plan
+        org.ai_calls_limit = limits.get(data.plan, 50)
+    db.commit()
+    db.refresh(org)
+    return {"id": org.id, "name": org.name, "plan": org.plan, "ai_calls_limit": org.ai_calls_limit}
+
+
+@app.get("/api/org/users")
+def list_org_users(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(require_role("admin")),
+):
+    """List all users (admin only)."""
+    users = db.query(UserModel).all()
+    return [{"id": u.id, "name": u.name, "email": u.email, "role": u.role,
+             "created_at": u.created_at.isoformat() if u.created_at else None} for u in users]
+
+
+class RoleUpdateRequest(BaseModel):
+    role: str
+
+
+@app.patch("/api/org/users/{user_id}/role")
+def update_user_role(
+    user_id: str,
+    data: RoleUpdateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    """Change a user's role (admin only)."""
+    if data.role not in ROLE_PERMISSIONS:
+        raise HTTPException(status_code=400, detail=f"Invalid role. Valid: {list(ROLE_PERMISSIONS.keys())}")
+    user = db.query(UserModel).filter(UserModel.id == user_id).first()
+    if not user:
+        raise HTTPException(status_code=404, detail="User not found")
+    if user.id == current_user.id:
+        raise HTTPException(status_code=400, detail="Cannot change your own role")
+    user.role = data.role
+    db.commit()
+    return {"id": user.id, "email": user.email, "role": user.role}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T004 — Subscription / AI Usage Limits
+# ════════════════════════════════════════════════════════════════════════════════
+
+def _log_ai_usage(db: Session, user_id: str, endpoint: str, tokens: int = 0):
+    """Record one AI call and increment org counter."""
+    db.add(AiUsageLogModel(
+        user_id=user_id,
+        endpoint=endpoint,
+        tokens_used=tokens,
+    ))
+    org = db.query(OrganizationModel).first()
+    if org:
+        org.ai_calls_used = (org.ai_calls_used or 0) + 1
+    db.commit()
+
+
+def _check_ai_quota(db: Session):
+    """Raise 429 if the org has exhausted its AI quota."""
+    org = db.query(OrganizationModel).first()
+    if org and org.ai_calls_limit >= 0 and org.ai_calls_used >= org.ai_calls_limit:
+        raise HTTPException(
+            status_code=429,
+            detail=f"AI quota exhausted ({org.ai_calls_used}/{org.ai_calls_limit}). Upgrade plan to continue."
+        )
+
+
+@app.get("/api/subscription")
+def get_subscription(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Return current plan and AI usage stats."""
+    org = db.query(OrganizationModel).first()
+    usage_logs = db.query(AiUsageLogModel).order_by(AiUsageLogModel.created_at.desc()).limit(20).all()
+    return {
+        "plan": org.plan if org else "free",
+        "ai_calls_used": org.ai_calls_used if org else 0,
+        "ai_calls_limit": org.ai_calls_limit if org else 50,
+        "ai_calls_remaining": (
+            max(0, org.ai_calls_limit - org.ai_calls_used)
+            if org and org.ai_calls_limit >= 0 else -1
+        ),
+        "recent_usage": [
+            {"endpoint": u.endpoint, "tokens": u.tokens_used,
+             "at": u.created_at.isoformat() if u.created_at else None}
+            for u in usage_logs
+        ],
+    }
+
+
+@app.post("/api/subscription/upgrade")
+def upgrade_plan(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(require_role("admin")),
+):
+    """Demo endpoint — upgrades plan to 'pro' instantly (no payment in demo)."""
+    org = db.query(OrganizationModel).first()
+    if not org:
+        raise HTTPException(status_code=404, detail="No org found")
+    org.plan = "pro"
+    org.ai_calls_limit = 1000
+    db.commit()
+    return {"plan": org.plan, "ai_calls_limit": org.ai_calls_limit, "message": "Upgraded to Pro"}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T005 — Email Automation (structured send + log)
+# ════════════════════════════════════════════════════════════════════════════════
+
+class SendEmailRequest(BaseModel):
+    to_email: str
+    to_name: str = ""
+    subject: str
+    body: str
+    template_id: Optional[str] = None
+    lead_id: Optional[str] = None
+    variables: Dict[str, str] = {}
+
+
+def _render_template(body: str, variables: Dict[str, str]) -> str:
+    """Replace {{variable}} placeholders."""
+    for k, v in variables.items():
+        body = body.replace(f"{{{{{k}}}}}", v)
+    return body
+
+
+@app.post("/api/email/send")
+def send_email(
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Send an email (mock — logs to DB, prints to console).
+    In production, swap the mock block with an SMTP/Resend/SendGrid call.
+    """
+    subject = _render_template(req.subject, req.variables)
+    body = _render_template(req.body, req.variables)
+
+    # ── Mock send (console) ──
+    logging.info(f"[EMAIL] To: {req.to_email} | Subject: {subject}")
+
+    log = EmailLogModel(
+        to_email=req.to_email,
+        to_name=req.to_name,
+        subject=subject,
+        body=body,
+        template_id=req.template_id,
+        lead_id=req.lead_id,
+        sent_by_id=current_user.id,
+        status="sent",
+    )
+    db.add(log)
+    db.commit()
+    db.refresh(log)
+    return {
+        "id": log.id,
+        "status": "sent",
+        "to": req.to_email,
+        "subject": subject,
+        "sent_at": log.sent_at.isoformat() if log.sent_at else None,
+        "note": "Email logged (mock). Integrate SMTP/Resend for real delivery.",
+    }
+
+
+@app.post("/api/email/send-template/{template_id}")
+def send_template_email(
+    template_id: str,
+    req: SendEmailRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Send a stored template filled with variables."""
+    tpl = db.query(TemplateModel).filter(TemplateModel.id == template_id).first()
+    if not tpl:
+        raise HTTPException(status_code=404, detail="Template not found")
+    req.subject = req.subject or tpl.subject
+    req.body = tpl.body
+    req.template_id = template_id
+    return send_email(req, db, current_user)
+
+
+@app.get("/api/email/logs")
+def get_email_logs(
+    lead_id: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Return email send history, optionally filtered by candidate."""
+    q = db.query(EmailLogModel).order_by(EmailLogModel.sent_at.desc())
+    if lead_id:
+        q = q.filter(EmailLogModel.lead_id == lead_id)
+    logs = q.limit(limit).all()
+    return [
+        {
+            "id": l.id, "to_email": l.to_email, "to_name": l.to_name,
+            "subject": l.subject, "status": l.status,
+            "lead_id": l.lead_id, "template_id": l.template_id,
+            "sent_at": l.sent_at.isoformat() if l.sent_at else None,
+        }
+        for l in logs
+    ]
+
+
+@app.get("/api/email/stats")
+def get_email_stats(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Aggregate email send stats."""
+    total = db.query(EmailLogModel).count()
+    sent = db.query(EmailLogModel).filter(EmailLogModel.status == "sent").count()
+    failed = db.query(EmailLogModel).filter(EmailLogModel.status == "failed").count()
+    return {"total": total, "sent": sent, "failed": failed}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T006 — Interview Scheduler
+# ════════════════════════════════════════════════════════════════════════════════
+
+def _interview_to_dict(s: InterviewSlotModel) -> Dict:
+    return {
+        "id": s.id,
+        "lead_id": s.lead_id,
+        "job_id": s.job_id,
+        "interviewer_name": s.interviewer_name,
+        "interviewer_email": s.interviewer_email,
+        "scheduled_at": s.scheduled_at.isoformat() if s.scheduled_at else None,
+        "duration_minutes": s.duration_minutes,
+        "status": s.status,
+        "notes": s.notes,
+        "meeting_link": s.meeting_link,
+        "ai_suggested": s.ai_suggested,
+        "created_at": s.created_at.isoformat() if s.created_at else None,
+    }
+
+
+class CreateInterviewRequest(BaseModel):
+    lead_id: str
+    job_id: Optional[str] = None
+    interviewer_name: str = ""
+    interviewer_email: str = ""
+    scheduled_at: Optional[str] = None    # ISO datetime string
+    duration_minutes: int = 45
+    notes: str = ""
+    meeting_link: str = ""
+
+
+class UpdateInterviewRequest(BaseModel):
+    status: Optional[str] = None
+    scheduled_at: Optional[str] = None
+    interviewer_name: Optional[str] = None
+    interviewer_email: Optional[str] = None
+    notes: Optional[str] = None
+    meeting_link: Optional[str] = None
+    duration_minutes: Optional[int] = None
+
+
+@app.get("/api/interviews")
+def list_interviews(
+    lead_id: Optional[str] = None,
+    status: Optional[str] = None,
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """List all interviews, optionally filtered by candidate or status."""
+    q = db.query(InterviewSlotModel).order_by(InterviewSlotModel.scheduled_at.asc())
+    if lead_id:
+        q = q.filter(InterviewSlotModel.lead_id == lead_id)
+    if status:
+        q = q.filter(InterviewSlotModel.status == status)
+    return [_interview_to_dict(s) for s in q.limit(limit).all()]
+
+
+@app.post("/api/interviews")
+def create_interview(
+    req: CreateInterviewRequest,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    """Schedule a new interview slot."""
+    lead = db.query(LeadModel).filter(LeadModel.id == req.lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    scheduled_dt = None
+    if req.scheduled_at:
+        try:
+            scheduled_dt = datetime.fromisoformat(req.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at format. Use ISO 8601.")
+
+    slot = InterviewSlotModel(
+        lead_id=req.lead_id,
+        job_id=req.job_id,
+        interviewer_name=req.interviewer_name,
+        interviewer_email=req.interviewer_email,
+        scheduled_at=scheduled_dt,
+        duration_minutes=req.duration_minutes,
+        notes=req.notes,
+        meeting_link=req.meeting_link,
+    )
+    db.add(slot)
+    db.commit()
+    db.refresh(slot)
+    return _interview_to_dict(slot)
+
+
+@app.patch("/api/interviews/{interview_id}")
+def update_interview(
+    interview_id: str,
+    req: UpdateInterviewRequest,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    slot = db.query(InterviewSlotModel).filter(InterviewSlotModel.id == interview_id).first()
+    if not slot:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    if req.status:
+        valid_statuses = ["scheduled", "confirmed", "cancelled", "completed"]
+        if req.status not in valid_statuses:
+            raise HTTPException(status_code=400, detail=f"Invalid status. Valid: {valid_statuses}")
+        slot.status = req.status
+    if req.scheduled_at is not None:
+        try:
+            slot.scheduled_at = datetime.fromisoformat(req.scheduled_at.replace("Z", "+00:00"))
+        except ValueError:
+            raise HTTPException(status_code=400, detail="Invalid scheduled_at format")
+    for field in ["interviewer_name", "interviewer_email", "notes", "meeting_link", "duration_minutes"]:
+        val = getattr(req, field)
+        if val is not None:
+            setattr(slot, field, val)
+    db.commit()
+    db.refresh(slot)
+    return _interview_to_dict(slot)
+
+
+@app.delete("/api/interviews/{interview_id}")
+def delete_interview(
+    interview_id: str,
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    slot = db.query(InterviewSlotModel).filter(InterviewSlotModel.id == interview_id).first()
+    if not slot:
+        raise HTTPException(status_code=404, detail="Interview not found")
+    db.delete(slot)
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/api/interviews/ai-suggest")
+def ai_suggest_slots(
+    lead_id: str,
+    job_id: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """
+    Use Gemini to suggest 3 interview time slots (+ tips) for a candidate.
+    Falls back to generic slots if Gemini is unavailable.
+    """
+    lead = db.query(LeadModel).filter(LeadModel.id == lead_id).first()
+    if not lead:
+        raise HTTPException(status_code=404, detail="Candidate not found")
+
+    job = db.query(JobModel).filter(JobModel.id == job_id).first() if job_id else None
+
+    if gemini.is_available():
+        try:
+            _check_ai_quota(db)
+            now_iso = datetime.now(timezone.utc).strftime("%Y-%m-%d %H:%M UTC")
+            prompt = f"""You are an expert interview scheduler. Suggest 3 interview slots for a candidate.
+
+Candidate: {lead.name} | Skills: {', '.join(lead.skills or [])} | Experience: {lead.experience}y | Score: {lead.score}/100
+Role: {job.title if job else 'General Interview'}
+Current time: {now_iso}
+
+Return ONLY valid JSON:
+{{
+  "slots": [
+    {{
+      "label": "e.g. Tuesday Morning",
+      "scheduled_at": "ISO 8601 datetime, within next 7 business days",
+      "duration_minutes": 45,
+      "interviewer_tip": "1 sentence tip for the interviewer"
+    }}
+  ],
+  "overall_tip": "1 sentence general advice for this candidate",
+  "suggested_format": "Technical | Behavioral | Culture Fit | Panel"
+}}"""
+            parsed = gemini.generate_json(prompt)
+            _log_ai_usage(db, current_user.id, "interviews/ai-suggest")
+            return {"lead_id": lead_id, "ai_powered": True, **parsed}
+        except HTTPException:
+            raise
+        except Exception as e:
+            logging.warning(f"Gemini interview suggest failed: {e}")
+
+    # Fallback
+    base = datetime.now(timezone.utc)
+    return {
+        "lead_id": lead_id,
+        "ai_powered": False,
+        "slots": [
+            {"label": "Monday Morning", "scheduled_at": (base + timedelta(days=1, hours=10)).isoformat(),
+             "duration_minutes": 45, "interviewer_tip": "Start with a technical screen."},
+            {"label": "Wednesday Afternoon", "scheduled_at": (base + timedelta(days=3, hours=14)).isoformat(),
+             "duration_minutes": 60, "interviewer_tip": "Deep dive into past projects."},
+            {"label": "Friday Morning", "scheduled_at": (base + timedelta(days=5, hours=11)).isoformat(),
+             "duration_minutes": 30, "interviewer_tip": "Culture fit and team intro."},
+        ],
+        "overall_tip": "Review candidate's resume before the interview.",
+        "suggested_format": "Technical",
+    }
+
+
+@app.get("/api/interviews/stats")
+def interview_stats(
+    db: Session = Depends(get_db),
+    _: UserModel = Depends(get_current_user),
+):
+    total = db.query(InterviewSlotModel).count()
+    scheduled = db.query(InterviewSlotModel).filter(InterviewSlotModel.status == "scheduled").count()
+    confirmed = db.query(InterviewSlotModel).filter(InterviewSlotModel.status == "confirmed").count()
+    completed = db.query(InterviewSlotModel).filter(InterviewSlotModel.status == "completed").count()
+    cancelled = db.query(InterviewSlotModel).filter(InterviewSlotModel.status == "cancelled").count()
+    return {
+        "total": total, "scheduled": scheduled, "confirmed": confirmed,
+        "completed": completed, "cancelled": cancelled,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# T002 — Security: CORS tightening already done above; add input validation helpers
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/admin/roles")
+def list_roles(_: UserModel = Depends(require_role("admin"))):
+    """Return available roles and their permissions."""
+    return {"roles": ROLE_PERMISSIONS}
 
 
 if __name__ == "__main__":

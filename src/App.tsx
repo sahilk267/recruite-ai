@@ -32,6 +32,9 @@ import { CandidateMatching } from './sections/CandidateMatching';
 import { OutreachAutomation } from './sections/OutreachAutomation';
 import { CandidatePipeline } from './sections/CandidatePipeline';
 import { AIAssistant } from './sections/AIAssistant';
+import { JobDescriptionGenerator } from './sections/JobDescriptionGenerator';
+import { InterviewScheduler } from './sections/InterviewScheduler';
+import { SettingsPanel } from './sections/SettingsPanel';
 
 type Section =
   | 'dashboard'
@@ -62,7 +65,10 @@ type Section =
   | 'candidate-matching'
   | 'outreach-automation'
   | 'candidate-pipeline'
-  | 'ai-assistant';
+  | 'ai-assistant'
+  | 'job-desc-generator'
+  | 'interview-scheduler'
+  | 'settings';
 
 function App() {
   const { isAuthenticated, isLoading } = useAuth();
@@ -146,6 +152,12 @@ function App() {
         return <CandidatePipeline />;
       case 'ai-assistant':
         return <AIAssistant />;
+      case 'job-desc-generator':
+        return <JobDescriptionGenerator />;
+      case 'interview-scheduler':
+        return <InterviewScheduler />;
+      case 'settings':
+        return <SettingsPanel />;
       default:
         return <DashboardOverview />;
     }
@@ -182,6 +194,9 @@ function App() {
       'outreach-automation': 'Automated Email Outreach',
       'candidate-pipeline': 'Candidate Pipeline Board',
       'ai-assistant': 'AI Recruitment Assistant',
+      'job-desc-generator': 'AI Job Description Generator',
+      'interview-scheduler': 'Interview Scheduler',
+      'settings': 'Settings',
     };
     return titles[activeSection] || 'Dashboard';
   };

@@ -29,6 +29,8 @@ import {
   SendHorizonal,
   KanbanSquare,
   MessageSquareMore,
+  Wand2,
+  CalendarDays,
 } from 'lucide-react';
 import { cn } from '@/lib/utils';
 
@@ -42,10 +44,12 @@ interface SidebarProps {
 const navItems = [
   { id: 'dashboard', label: 'Dashboard', icon: LayoutDashboard },
   { id: 'ai-assistant', label: 'AI Assistant', icon: MessageSquareMore, badge: 'AI' },
+  { id: 'job-desc-generator', label: 'JD Generator', icon: Wand2, badge: 'AI' },
   { id: 'resume-screener', label: 'Resume Screener', icon: ScanText, badge: 'AI' },
   { id: 'candidate-matching', label: 'Candidate Match', icon: ListChecks, badge: 'AI' },
   { id: 'outreach-automation', label: 'Email Outreach', icon: SendHorizonal, badge: 'AI' },
   { id: 'candidate-pipeline', label: 'Pipeline Board', icon: KanbanSquare },
+  { id: 'interview-scheduler', label: 'Interviews', icon: CalendarDays },
   { id: 'traffic', label: 'Traffic Engine', icon: Megaphone },
   { id: 'jobs', label: 'Job Intelligence', icon: Search },
   { id: 'ai-processing', label: 'AI Processing', icon: Brain },
@@ -72,6 +76,7 @@ const systemItems = [
   { id: 'phases', label: 'Phases', icon: Rocket },
   { id: 'revenue', label: 'Revenue Engine', icon: TrendingUp },
   { id: 'automation-levels', label: 'Auto Levels', icon: Cpu },
+  { id: 'settings', label: 'Settings', icon: Settings },
 ];
 
 export function Sidebar({ activeSection, onSectionChange, isOpen, onToggle }: SidebarProps) {

@@ -1,7 +1,7 @@
 # RecruitAI - AI-Powered Recruitment SaaS
 
 ## Overview
-A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real Gemini-powered AI for resume parsing, candidate scoring, semantic job matching, a natural language AI assistant, and a complete recruitment management dashboard with Kanban pipeline, search/filter, and full audit trail.
+A full-stack AI recruitment platform built with React 19 + Vite + TypeScript (frontend) and FastAPI + SQLite (backend). Features real Gemini-powered AI for resume parsing, job description generation, candidate scoring, semantic job matching, a natural language AI assistant, complete interview scheduling with AI slot suggestions, multi-tenancy with RBAC, subscription/quota management, email automation, and a full recruitment pipeline board with audit trail.
 
 ## Architecture
 
