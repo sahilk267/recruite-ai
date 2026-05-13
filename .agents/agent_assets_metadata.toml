@@ -1,0 +1,8 @@
+uploads = []
+generated = []
+
+[[outputs]]
+id = "QB0-NFixf7CSfpclU6sQA"
+uri = "file://FULL_AUDIT_REPORT.md"
+type = "text"
+title = "FULL_AUDIT_REPORT.md — RecruiteAI Complete Audit"

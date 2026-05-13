@@ -1,0 +1,179 @@
+You are an expert software auditor. I need you to perform an extremely thorough, line-by-line audit of the entire "RecruiteAI" project currently open in this Replit environment. 
+
+Your goal: Produce a markdown file named `FULL_AUDIT_REPORT.md` that details everything — from frontend components to backend endpoints, database schema, AI integrations, authentication, routing, UI/UX, security, performance, and recruitment-specific workflows. 
+
+**Do NOT change any code.** You are only reading, analyzing, and documenting.
+
+---
+
+### Audit Scope & Methodology
+
+1. **Read every single file** in the project (frontend `src/`, backend `backend/main.py`, all configs, documentation, JSON, etc.).
+2. For each feature/module, determine its state:
+   - ✅ **Fully Implemented** (real API calls, no mock data, properly wired)
+   - ⚠️ **Partially Implemented** (some logic exists but incomplete, or uses mock data)
+   - ❌ **Missing** (mentioned in docs/audits but no code, or logically required)
+   - 🔴 **Bug/Error** (broken logic, 404 calls, crashes)
+3. Cross-check documentation (like `replit.md`, `FRONTEND_AUDIT_REPORT.md`, etc.) with actual code. Note any discrepancies (e.g., docs mention Node.js but backend is Python).
+4. For the frontend:
+   - List every component and its data source (mock vs API).
+   - Verify routing: is React Router used? Or still `activeSection` state?
+   - Check for form validation (React Hook Form, Zod, etc.).
+   - Check loading states, error boundaries, empty states.
+5. For the backend:
+   - List every endpoint, verify it exists and works (by reading code, not running). Note incomplete or truncated endpoints.
+   - Check auth middleware and role-based access.
+   - Check database models and migration strategy (is Alembic used? SQLite committed?).
+   - Check AI integration: which endpoints use Gemini? Are there fallbacks?
+6. For database:
+   - List all tables with columns, data types, relationships.
+   - Note any hardcoded demo data/seeds.
+   - Note if `recruiteai.db` is committed (yes/no).
+7. For email & messaging:
+   - Check if real email sending is implemented (Resend/SMTP) or only mock logging.
+   - Check if any in-app messaging/chat exists between recruiter and candidate.
+   - Check deal/candidate negotiation, follow-up reminders, offer letter generation.
+8. For social media:
+   - Check for any social media posting, scheduling, content generation.
+9. For CI/CD & DevOps:
+   - Note absence of Docker, CI/CD pipelines, etc.
+10. For documentation:
+    - Evaluate README, architecture docs, setup guides.
+
+---
+
+### Required Output Format (Markdown)
+
+The report must follow this structure exactly:
+
+```markdown
+# FULL AUDIT REPORT – RecruiteAI
+**Generated on:** [date]
+
+---
+
+## 1. Executive Summary
+- Overall maturity score /10
+- Top 5 critical gaps
+- Top 5 strengths
+
+---
+
+## 2. Frontend (React + TypeScript)
+### 2.1 Components Inventory
+| Component File | Section/Feature | Data Source | Status (Complete/Partial/Missing) | Notes |
+|----------------|-----------------|-------------|-----------------------------------|-------|
+| ...            | ...             | API / Mock  | ...                               | ...   |
+
+### 2.2 Routing & Navigation
+- Current method: [describe]
+- Missing routes: [list]
+
+### 2.3 State Management
+- API layer (Axios, React Query) usage
+- AuthContext status
+- Any left mock data or hardcoded lists
+
+### 2.4 Forms & Validation
+- List all forms, their validation libraries used (or none), client-side and server-side.
+
+### 2.5 UI/UX Quality
+- Loading skeletons, error boundaries, empty states, responsiveness.
+
+---
+
+## 3. Backend (FastAPI)
+### 3.1 API Endpoints Inventory
+| Method | Path | Status (Implemented/Partial/Not Found) | Description & Issues |
+|--------|------|----------------------------------------|----------------------|
+| ...    | ...  | ...                                    | ...                  |
+
+### 3.2 Authentication & Authorization
+- JWT implementation details
+- Route protection middleware
+- Role-based access (admin, recruiter, etc.)
+- Password hashing, token refresh
+
+### 3.3 AI Integration
+- Gemini helper usage, endpoints using AI
+- Fallback mechanisms
+- Missing AI features (e.g., job description generator endpoint not found)
+- Resume parsing, candidate matching, chat assistant status
+
+### 3.4 Database Models
+- List all SQLAlchemy models, columns, relationships
+- Table: ai_personas, email_campaigns, etc.
+- Migration handling (Alembic present? manual?)
+- Commit of .db file? Yes/No
+
+### 3.5 Background Jobs & Async Tasks
+- Queue system (Celery, etc.) – present?
+- Email sending (real vs mock)
+- Scheduled tasks (follow-ups, reminders)
+
+---
+
+## 4. Email & Messaging System
+### 4.1 Email Capabilities
+- Real email sending via Resend/SMTP implemented?
+- Bulk email campaign builder present?
+- Email template system
+- Email logs table
+
+### 4.2 In-App Messaging
+- Candidate-Recruiter chat? 
+- Real-time notifications? (WebSockets)
+
+### 4.3 Deal & Follow-up
+- Offer/deal stage management
+- Automated follow-up reminders
+- Negotiation tracking
+
+---
+
+## 5. Recruitment-Specific Features
+- ATS Pipeline (Kanban board) status
+- Interview scheduling
+- Resume parsing accuracy
+- Candidate scoring and matching
+- Job posting intelligence
+- Outreach campaigns
+- Analytics dashboard
+
+---
+
+## 6. Social Media Hub
+- Social post generation?
+- Scheduling? LinkedIn API integration?
+- Persona content style
+
+---
+
+## 7. DevOps & Infrastructure
+- Docker files, docker-compose
+- Environment variables (.env.example)
+- CI/CD workflows (.github)
+- Security (rate limiting, CORS, file upload validation)
+
+---
+
+## 8. Documentation & Code Quality
+- README quality (default Vite? proper?)
+- Outdated docs (like BACKEND_SETUP_COMPLETE.md)
+- Code duplication, dead code
+- Test coverage (backend/frontend)
+
+---
+
+## 9. Critical Gaps Summary (Prioritized)
+1. [Gap 1 – with impact]
+2. [Gap 2 – ...]
+...
+10. 
+
+---
+
+## 10. Recommendations for Production Readiness
+- Immediate fixes
+- Feature completion roadmap
+- Architecture improvements
