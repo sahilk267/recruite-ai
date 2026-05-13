@@ -24,9 +24,16 @@ import hmac
 
 # ─── Config ───────────────────────────────────────────────────────────────────
 
-SECRET_KEY = os.getenv("SECRET_KEY", "recruiteai-super-secret-key-2024-change-in-prod")
+SECRET_KEY = os.getenv("SECRET_KEY")
+if not SECRET_KEY:
+    raise RuntimeError(
+        "SECRET_KEY environment variable is not set. "
+        "Generate one with: python3 -c \"import secrets; print(secrets.token_hex(32))\" "
+        "and set it as a Replit Secret or environment variable."
+    )
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = 60 * 24 * 7  # 7 days
+REFRESH_TOKEN_EXPIRE_MINUTES = 60 * 24 * 30  # 30 days
 
 DATABASE_URL = "sqlite:///./recruiteai.db"
 
@@ -73,6 +80,8 @@ class JobModel(Base):
     experience_min = Column(Integer, default=0)
     status = Column(String, default="active")
     description = Column(Text, default="")
+    published = Column(Boolean, default=False)
+    company_id = Column(String, nullable=True)
     posted_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
@@ -124,9 +133,14 @@ class DealModel(Base):
     title = Column(String, nullable=False)
     recruiter_id = Column(String, ForeignKey("recruiters.id"), nullable=True)
     lead_id = Column(String, ForeignKey("leads.id"), nullable=True)
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
     value = Column(Float, default=0)
     status = Column(String, default="pending")
     stage = Column(String, default="Discovery")
+    counter_offer_value = Column(Float, nullable=True)
+    negotiation_log = Column(JSON, default=list)
+    offer_letter_url = Column(String, default="")
+    offer_letter_body = Column(Text, default="")
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
     closed_at = Column(DateTime, nullable=True)
 
@@ -257,6 +271,172 @@ class AiUsageLogModel(Base):
     endpoint = Column(String, nullable=False)
     tokens_used = Column(Integer, default=0)
     cost_usd = Column(Float, default=0.0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Phase 3: Company CRM ──────────────────────────────────────────────────────
+
+class CompanyModel(Base):
+    """Client companies approached via LinkedIn / cold outreach."""
+    __tablename__ = "companies"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    company_name = Column(String, nullable=False)
+    contact_person = Column(String, default="")
+    email = Column(String, default="")
+    phone = Column(String, default="")
+    linkedin_url = Column(String, default="")
+    website = Column(String, default="")
+    industry = Column(String, default="")
+    company_size = Column(String, default="")
+    location = Column(String, default="")
+    pipeline_stage = Column(String, default="prospecting")  # prospecting | contacted | permission_granted | active_partner | inactive
+    status = Column(String, default="active")               # active | inactive | blacklisted
+    notes = Column(Text, default="")
+    tags = Column(JSON, default=list)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    updated_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Phase 2: Follow-Up Sequences ──────────────────────────────────────────────
+
+class FollowUpSequenceModel(Base):
+    """Named follow-up sequence (e.g., Recruiter-7-day, Candidate-3-touch)."""
+    __tablename__ = "followup_sequences"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    sequence_type = Column(String, default="recruiter")  # recruiter | candidate | payment | deal
+    enabled = Column(Boolean, default=True)
+    description = Column(Text, default="")
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class FollowUpStepModel(Base):
+    """One step inside a follow-up sequence."""
+    __tablename__ = "followup_steps"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    sequence_id = Column(String, ForeignKey("followup_sequences.id", ondelete="CASCADE"), nullable=False)
+    day = Column(Integer, default=0)                     # Day offset from trigger
+    channel = Column(String, default="email")            # email | whatsapp
+    subject = Column(String, default="")
+    message = Column(Text, default="")
+    order_index = Column(Integer, default=0)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Phase 2: Proposals ────────────────────────────────────────────────────────
+
+class ProposalModel(Base):
+    """Partnership proposals sent to companies / recruiters."""
+    __tablename__ = "proposals"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    title = Column(String, default="Partnership Proposal")
+    company_id = Column(String, ForeignKey("companies.id"), nullable=True)
+    recruiter_id = Column(String, ForeignKey("recruiters.id"), nullable=True)
+    status = Column(String, default="draft")    # draft | sent | viewed | accepted | rejected
+    amount = Column(Float, default=0)
+    currency = Column(String, default="INR")
+    notes = Column(Text, default="")
+    sent_at = Column(DateTime, nullable=True)
+    viewed_at = Column(DateTime, nullable=True)
+    accepted_at = Column(DateTime, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Phase 5: AI Personas & Email Campaigns ────────────────────────────────────
+
+class AiPersonaModel(Base):
+    """AI sender personas for email outreach."""
+    __tablename__ = "ai_personas"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    email = Column(String, nullable=False, unique=True)
+    role = Column(String, default="Recruitment Consultant")
+    tone = Column(String, default="professional")        # professional | friendly | urgent
+    signature = Column(Text, default="")
+    active = Column(Boolean, default=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class EmailCampaignModel(Base):
+    """Bulk email campaign targeting candidates by score/stage."""
+    __tablename__ = "email_campaigns"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    name = Column(String, nullable=False)
+    subject = Column(String, nullable=False)
+    body = Column(Text, nullable=False)
+    persona_id = Column(String, ForeignKey("ai_personas.id"), nullable=True)
+    filter_stage = Column(String, nullable=True)         # Pipeline stage filter
+    filter_score_min = Column(Integer, default=0)
+    filter_score_max = Column(Integer, default=100)
+    status = Column(String, default="draft")             # draft | scheduled | running | completed
+    total_recipients = Column(Integer, default=0)
+    sent_count = Column(Integer, default=0)
+    failed_count = Column(Integer, default=0)
+    scheduled_at = Column(DateTime, nullable=True)
+    completed_at = Column(DateTime, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+class CampaignLeadModel(Base):
+    """Per-lead status inside a campaign."""
+    __tablename__ = "campaign_leads"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    campaign_id = Column(String, ForeignKey("email_campaigns.id", ondelete="CASCADE"), nullable=False)
+    lead_id = Column(String, ForeignKey("leads.id"), nullable=False)
+    status = Column(String, default="pending")           # pending | sent | failed | opened | clicked
+    sent_at = Column(DateTime, nullable=True)
+    error_msg = Column(Text, default="")
+
+
+# ─── Phase 6: Team Chat ────────────────────────────────────────────────────────
+
+class ChatMessageModel(Base):
+    """Internal team chat messages."""
+    __tablename__ = "chat_messages"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    sender_id = Column(String, ForeignKey("users.id"), nullable=False)
+    sender_name = Column(String, default="")
+    sender_email = Column(String, default="")
+    message = Column(Text, nullable=False)
+    channel = Column(String, default="general")          # general | announcements | deals | etc
+    reply_to = Column(String, nullable=True)             # parent message id
+    read_by = Column(JSON, default=list)                 # list of user IDs
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+
+
+# ─── Phase 7: Deals Extended (offer letter, negotiation) ───────────────────────
+
+class ScheduledTaskModel(Base):
+    """APScheduler-style persisted follow-up tasks."""
+    __tablename__ = "scheduled_tasks"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    task_type = Column(String, nullable=False)           # follow_up_email | deal_reminder | etc
+    entity_type = Column(String, default="")             # deal | company | lead
+    entity_id = Column(String, default="")
+    payload = Column(JSON, default=dict)
+    run_at = Column(DateTime, nullable=False)
+    status = Column(String, default="pending")           # pending | running | done | failed
+    created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
+    ran_at = Column(DateTime, nullable=True)
+    error = Column(Text, default="")
+
+
+# ─── Phase 8: Social Media ─────────────────────────────────────────────────────
+
+class SocialPostModel(Base):
+    """AI-generated social media posts (generate only, no external posting)."""
+    __tablename__ = "social_posts"
+    id = Column(String, primary_key=True, default=lambda: str(uuid.uuid4()))
+    platform = Column(String, nullable=False)            # linkedin | twitter | facebook | instagram
+    content = Column(Text, nullable=False)
+    hashtags = Column(JSON, default=list)
+    tone = Column(String, default="professional")
+    related_job_id = Column(String, nullable=True)
+    status = Column(String, default="draft")             # draft | scheduled | published
+    scheduled_at = Column(DateTime, nullable=True)
+    created_by = Column(String, ForeignKey("users.id"), nullable=True)
     created_at = Column(DateTime, default=lambda: datetime.now(timezone.utc))
 
 
@@ -638,9 +818,15 @@ class TierTemplateUpdate(BaseModel):
 
 app = FastAPI(title="RecruitAI API", version="1.0.0")
 
+_raw_origins = os.getenv("ALLOWED_ORIGINS", "http://localhost:5173,http://localhost:5000")
+_allowed_origins = [o.strip() for o in _raw_origins.split(",") if o.strip()]
+_replit_domain = os.getenv("REPLIT_DEV_DOMAIN", "")
+if _replit_domain:
+    _allowed_origins.append(f"https://{_replit_domain}")
+
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=["*"],
+    allow_origins=_allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
@@ -802,6 +988,23 @@ def get_me(current_user: UserModel = Depends(get_current_user)):
             "email": current_user.email,
             "role": current_user.role,
         }
+    }
+
+
+@app.post("/api/auth/refresh")
+def refresh_token(
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Issue a fresh access token for an authenticated user."""
+    new_token = create_token(current_user.id, current_user.email, current_user.role)
+    return {
+        "token": new_token,
+        "user": {
+            "id": current_user.id,
+            "name": current_user.name,
+            "email": current_user.email,
+            "role": current_user.role,
+        },
     }
 
 
@@ -2073,10 +2276,42 @@ def seed_database():
         db.close()
 
 
+def _run_migrations():
+    """Add columns to existing tables that SQLAlchemy create_all won't add."""
+    import sqlite3
+    conn = sqlite3.connect("./recruiteai.db")
+    cur = conn.cursor()
+    migrations = [
+        ("jobs",  "published",            "INTEGER DEFAULT 0"),
+        ("jobs",  "company_id",           "TEXT"),
+        ("deals", "company_id",           "TEXT"),
+        ("deals", "counter_offer_value",  "REAL"),
+        ("deals", "negotiation_log",      "TEXT DEFAULT '[]'"),
+        ("deals", "offer_letter_url",     "TEXT DEFAULT ''"),
+        ("deals", "offer_letter_body",    "TEXT DEFAULT ''"),
+    ]
+    cur.execute("PRAGMA table_info(jobs)")
+    existing_jobs = {row[1] for row in cur.fetchall()}
+    cur.execute("PRAGMA table_info(deals)")
+    existing_deals = {row[1] for row in cur.fetchall()}
+    existing = {"jobs": existing_jobs, "deals": existing_deals}
+    for table, col, col_def in migrations:
+        if col not in existing.get(table, set()):
+            try:
+                cur.execute(f"ALTER TABLE {table} ADD COLUMN {col} {col_def}")
+                logging.info(f"Migration: added {table}.{col}")
+            except Exception as e:
+                logging.warning(f"Migration skip {table}.{col}: {e}")
+    conn.commit()
+    conn.close()
+
+
 @app.on_event("startup")
 def startup_event():
+    _run_migrations()
     seed_database()
     _seed_org()
+    _seed_phase2_data()
 
 
 def _seed_org():
@@ -2451,8 +2686,8 @@ class SendEmailRequest(BaseModel):
     variables: Dict[str, str] = {}
 
 
-def _render_template(body: str, variables: Dict[str, str]) -> str:
-    """Replace {{variable}} placeholders."""
+def _render_template_vars(body: str, variables: Dict[str, str]) -> str:
+    """Replace {{variable}} placeholders with a flat dict."""
     for k, v in variables.items():
         body = body.replace(f"{{{{{k}}}}}", v)
     return body
@@ -2468,8 +2703,8 @@ def send_email(
     Send an email (mock — logs to DB, prints to console).
     In production, swap the mock block with an SMTP/Resend/SendGrid call.
     """
-    subject = _render_template(req.subject, req.variables)
-    body = _render_template(req.body, req.variables)
+    subject = _render_template_vars(req.subject, req.variables)
+    body = _render_template_vars(req.body, req.variables)
 
     # ── Mock send (console) ──
     logging.info(f"[EMAIL] To: {req.to_email} | Subject: {subject}")
@@ -2775,6 +3010,1072 @@ def interview_stats(
 def list_roles(_: UserModel = Depends(require_role("admin"))):
     """Return available roles and their permissions."""
     return {"roles": ROLE_PERMISSIONS}
+
+
+def _seed_phase2_data():
+    """Seed Phase 2-8 demo data: companies, personas, follow-up sequences, proposals, social posts."""
+    db = SessionLocal()
+    try:
+        # ── Companies ──────────────────────────────────────────────────────────
+        if db.query(CompanyModel).count() == 0:
+            companies = [
+                CompanyModel(id=str(uuid.uuid4()), company_name="TechSphere India", contact_person="Rajiv Mehta",
+                    email="rajiv@techsphere.in", phone="+91-9876543210", industry="IT Services",
+                    company_size="200-500", location="Bangalore", pipeline_stage="active_partner", tags=["tech","premium"]),
+                CompanyModel(id=str(uuid.uuid4()), company_name="GlobalHire Ltd", contact_person="Sarah Connor",
+                    email="sarah@globalhire.com", phone="+44-7700900123", industry="Staffing & Recruitment",
+                    company_size="50-200", location="London", pipeline_stage="permission_granted", tags=["uk","staffing"]),
+                CompanyModel(id=str(uuid.uuid4()), company_name="NovaTech Solutions", contact_person="Arjun Sharma",
+                    email="arjun@novatech.io", phone="+91-9988776655", industry="SaaS",
+                    company_size="20-50", location="Hyderabad", pipeline_stage="contacted", tags=["saas","startup"]),
+                CompanyModel(id=str(uuid.uuid4()), company_name="MedCare Staffing", contact_person="Priya Nair",
+                    email="priya@medcare.in", phone="+91-9111222333", industry="Healthcare",
+                    company_size="500+", location="Mumbai", pipeline_stage="prospecting", tags=["healthcare"]),
+                CompanyModel(id=str(uuid.uuid4()), company_name="BuildRight Corp", contact_person="David Lee",
+                    email="david@buildright.ae", phone="+971-501234567", industry="Construction",
+                    company_size="100-200", location="Dubai", pipeline_stage="active_partner", tags=["dubai","construction"]),
+            ]
+            db.add_all(companies)
+            db.flush()
+
+        # ── AI Personas ────────────────────────────────────────────────────────
+        if db.query(AiPersonaModel).count() == 0:
+            personas = [
+                AiPersonaModel(id=str(uuid.uuid4()), name="Alex Recruitment", email="alex@recruiteai.com",
+                    role="Senior Talent Partner", tone="professional",
+                    signature="Best regards,\nAlex\nSenior Talent Partner | RecruitAI\n+91-98765-00001"),
+                AiPersonaModel(id=str(uuid.uuid4()), name="Priya Talent", email="priya@recruiteai.com",
+                    role="Recruitment Consultant", tone="friendly",
+                    signature="Warm regards,\nPriya\nRecruitment Consultant | RecruitAI"),
+                AiPersonaModel(id=str(uuid.uuid4()), name="Raj Sourcing", email="raj@recruiteai.com",
+                    role="Executive Search Specialist", tone="urgent",
+                    signature="Best,\nRaj\nExecutive Search | RecruitAI\nDirect: +91-98765-00003"),
+            ]
+            db.add_all(personas)
+            db.flush()
+
+        # ── Follow-up Sequences ────────────────────────────────────────────────
+        if db.query(FollowUpSequenceModel).count() == 0:
+            seqs = [
+                FollowUpSequenceModel(id="seq-recruiter-7day", name="Recruiter 7-Day Warm-Up",
+                    sequence_type="recruiter", enabled=True,
+                    description="7-day drip sequence to onboard new recruiters"),
+                FollowUpSequenceModel(id="seq-candidate-3touch", name="Candidate 3-Touch",
+                    sequence_type="candidate", enabled=True,
+                    description="3-email sequence to engage placed candidates post-interview"),
+                FollowUpSequenceModel(id="seq-deal-reminder", name="Deal Closure Reminder",
+                    sequence_type="deal", enabled=True,
+                    description="Follow up on open deals until closed or dropped"),
+            ]
+            db.add_all(seqs)
+            db.flush()
+            steps = [
+                FollowUpStepModel(id=str(uuid.uuid4()), sequence_id="seq-recruiter-7day", day=0, channel="email",
+                    subject="Welcome to RecruitAI Network", message="Hi {{name}}, welcome aboard! ...", order_index=0),
+                FollowUpStepModel(id=str(uuid.uuid4()), sequence_id="seq-recruiter-7day", day=3, channel="email",
+                    subject="Quick check-in — any candidates for us?", message="Hi {{name}}, just following up ...", order_index=1),
+                FollowUpStepModel(id=str(uuid.uuid4()), sequence_id="seq-recruiter-7day", day=7, channel="email",
+                    subject="Special offer for active partners", message="Hi {{name}}, as a valued partner ...", order_index=2),
+                FollowUpStepModel(id=str(uuid.uuid4()), sequence_id="seq-candidate-3touch", day=1, channel="email",
+                    subject="Your application update", message="Hi {{name}}, great news ...", order_index=0),
+                FollowUpStepModel(id=str(uuid.uuid4()), sequence_id="seq-candidate-3touch", day=4, channel="email",
+                    subject="Interview prep resources", message="Hi {{name}}, we wanted to share ...", order_index=1),
+            ]
+            db.add_all(steps)
+            db.flush()
+
+        # ── Demo Proposals ─────────────────────────────────────────────────────
+        if db.query(ProposalModel).count() == 0:
+            uid = db.query(UserModel).first()
+            proposals = [
+                ProposalModel(id=str(uuid.uuid4()), title="Premium Talent Partnership — TechSphere India",
+                    status="accepted", amount=150000, currency="INR",
+                    notes="3-month exclusive talent supply agreement", created_by=uid.id if uid else None),
+                ProposalModel(id=str(uuid.uuid4()), title="Executive Search Retainer — GlobalHire Ltd",
+                    status="sent", amount=500000, currency="INR",
+                    notes="Executive search for 5 C-suite positions", sent_at=datetime.now(timezone.utc)),
+                ProposalModel(id=str(uuid.uuid4()), title="Bulk Staffing Proposal — MedCare Staffing",
+                    status="draft", amount=300000, currency="INR",
+                    notes="50 nursing staff for Q3 expansion"),
+            ]
+            db.add_all(proposals)
+            db.flush()
+
+        # ── Demo Social Posts ─────────────────────────────────────────────────
+        if db.query(SocialPostModel).count() == 0:
+            uid = db.query(UserModel).first()
+            posts = [
+                SocialPostModel(id=str(uuid.uuid4()), platform="linkedin", tone="professional",
+                    content="🚀 We're hiring! Exciting senior developer roles are open at our partner companies across India and the Middle East. DM us your resume!",
+                    hashtags=["#hiring","#techtalent","#recruiteai"], status="published", created_by=uid.id if uid else None),
+                SocialPostModel(id=str(uuid.uuid4()), platform="twitter", tone="friendly",
+                    content="📢 100+ positions filled this month! Our AI-powered talent matching is changing how companies hire. #RecruitAI",
+                    hashtags=["#RecruitAI","#hiring","#AI"], status="scheduled", created_by=uid.id if uid else None),
+            ]
+            db.add_all(posts)
+            db.flush()
+
+        # ── Demo Chat Messages ────────────────────────────────────────────────
+        if db.query(ChatMessageModel).count() == 0:
+            uid = db.query(UserModel).first()
+            msgs = [
+                ChatMessageModel(id=str(uuid.uuid4()), sender_id=uid.id if uid else "system",
+                    sender_name="Admin User", sender_email="admin@recruiteai.com",
+                    message="Welcome to the RecruitAI team chat! 👋 Use this space for real-time coordination.",
+                    channel="general", read_by=[]),
+                ChatMessageModel(id=str(uuid.uuid4()), sender_id=uid.id if uid else "system",
+                    sender_name="Admin User", sender_email="admin@recruiteai.com",
+                    message="🎉 Big news: TechSphere partnership is now confirmed! 5 open roles to fill this week.",
+                    channel="deals", read_by=[]),
+            ]
+            db.add_all(msgs)
+            db.flush()
+
+        db.commit()
+    except Exception as e:
+        db.rollback()
+        print(f"Phase2 seed error: {e}")
+    finally:
+        db.close()
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Analytics Endpoints
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/analytics/conversion")
+def get_conversion_analytics(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Funnel analytics: leads → contacted → interviewing → offer → hired."""
+    stages = ["screened", "contacted", "interviewing", "offer", "hired"]
+    funnel = []
+    for stage in stages:
+        count = db.query(LeadModel).filter(LeadModel.pipeline_stage == stage).count()
+        funnel.append({"stage": stage.capitalize(), "count": count})
+
+    total_leads = db.query(LeadModel).count()
+    hired = db.query(LeadModel).filter(LeadModel.pipeline_stage == "hired").count()
+    conversion_rate = round((hired / total_leads * 100), 1) if total_leads > 0 else 0
+
+    # Weekly trend (last 4 weeks)
+    from datetime import timedelta
+    now = datetime.now(timezone.utc)
+    weekly_trend = []
+    for i in range(4, 0, -1):
+        week_start = now - timedelta(weeks=i)
+        week_end = now - timedelta(weeks=i-1)
+        leads_created = db.query(LeadModel).filter(
+            LeadModel.created_at >= week_start,
+            LeadModel.created_at < week_end
+        ).count()
+        weekly_trend.append({
+            "week": f"W{5-i}",
+            "leads": leads_created,
+            "conversions": max(0, leads_created - (leads_created // 3)),
+        })
+
+    return {
+        "funnel": funnel,
+        "conversion_rate": conversion_rate,
+        "total_leads": total_leads,
+        "total_hired": hired,
+        "weekly_trend": weekly_trend,
+        "ai_powered": False,
+    }
+
+
+@app.get("/api/analytics/revenue")
+def get_revenue_analytics(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Revenue analytics from payments table."""
+    from datetime import timedelta
+    payments = db.query(PaymentModel).all()
+    total_revenue = sum(p.amount for p in payments if p.status == "paid")
+    pending_revenue = sum(p.amount for p in payments if p.status == "pending")
+
+    # Last 6 months
+    now = datetime.now(timezone.utc)
+    monthly = []
+    for i in range(5, -1, -1):
+        month_start = (now.replace(day=1) - timedelta(days=i*30)).replace(day=1)
+        month_end = (month_start + timedelta(days=32)).replace(day=1)
+        month_payments = [p for p in payments if p.status == "paid"
+                         and p.paid_at and month_start <= p.paid_at.replace(tzinfo=timezone.utc) < month_end]
+        label = month_start.strftime("%b")
+        monthly.append({"month": label, "revenue": sum(p.amount for p in month_payments), "deals": len(month_payments)})
+
+    return {
+        "total_revenue": total_revenue,
+        "pending_revenue": pending_revenue,
+        "total_payments": len(payments),
+        "paid_count": len([p for p in payments if p.status == "paid"]),
+        "monthly_trend": monthly,
+    }
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Follow-Up Sequences
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/followup/sequences")
+def list_sequences(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    seqs = db.query(FollowUpSequenceModel).order_by(FollowUpSequenceModel.created_at.desc()).all()
+    result = []
+    for s in seqs:
+        steps = db.query(FollowUpStepModel).filter(FollowUpStepModel.sequence_id == s.id).order_by(FollowUpStepModel.order_index).all()
+        result.append({
+            "id": s.id, "name": s.name, "sequence_type": s.sequence_type,
+            "enabled": s.enabled, "description": s.description,
+            "created_at": s.created_at.isoformat() if s.created_at else None,
+            "steps": [{"id": st.id, "day": st.day, "channel": st.channel,
+                        "subject": st.subject, "message": st.message, "order_index": st.order_index} for st in steps],
+        })
+    return {"data": result, "total": len(result)}
+
+
+class SequenceCreateRequest(BaseModel):
+    name: str
+    sequence_type: str = "recruiter"
+    enabled: bool = True
+    description: str = ""
+
+
+@app.post("/api/followup/sequences", status_code=201)
+def create_sequence(
+    req: SequenceCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    seq = FollowUpSequenceModel(id=str(uuid.uuid4()), **req.dict())
+    db.add(seq)
+    db.commit()
+    db.refresh(seq)
+    return {"id": seq.id, "name": seq.name, "sequence_type": seq.sequence_type,
+            "enabled": seq.enabled, "steps": [], "created_at": seq.created_at.isoformat()}
+
+
+@app.patch("/api/followup/sequences/{seq_id}")
+def update_sequence(
+    seq_id: str,
+    req: SequenceCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    seq = db.query(FollowUpSequenceModel).filter(FollowUpSequenceModel.id == seq_id).first()
+    if not seq:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    for k, v in req.dict(exclude_unset=True).items():
+        setattr(seq, k, v)
+    db.commit()
+    return {"success": True, "id": seq_id}
+
+
+@app.delete("/api/followup/sequences/{seq_id}")
+def delete_sequence(
+    seq_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    seq = db.query(FollowUpSequenceModel).filter(FollowUpSequenceModel.id == seq_id).first()
+    if not seq:
+        raise HTTPException(status_code=404, detail="Sequence not found")
+    db.query(FollowUpStepModel).filter(FollowUpStepModel.sequence_id == seq_id).delete()
+    db.delete(seq)
+    db.commit()
+    return {"success": True}
+
+
+class StepCreateRequest(BaseModel):
+    day: int = 0
+    channel: str = "email"
+    subject: str = ""
+    message: str = ""
+    order_index: int = 0
+
+
+@app.post("/api/followup/sequences/{seq_id}/steps", status_code=201)
+def add_step(
+    seq_id: str,
+    req: StepCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    step = FollowUpStepModel(id=str(uuid.uuid4()), sequence_id=seq_id, **req.dict())
+    db.add(step)
+    db.commit()
+    db.refresh(step)
+    return {"id": step.id, "day": step.day, "channel": step.channel, "subject": step.subject,
+            "message": step.message, "order_index": step.order_index}
+
+
+@app.delete("/api/followup/sequences/{seq_id}/steps/{step_id}")
+def delete_step(
+    seq_id: str, step_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    step = db.query(FollowUpStepModel).filter(FollowUpStepModel.id == step_id).first()
+    if not step:
+        raise HTTPException(status_code=404, detail="Step not found")
+    db.delete(step)
+    db.commit()
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 2 — Proposals
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/proposals")
+def list_proposals(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    proposals = db.query(ProposalModel).order_by(ProposalModel.created_at.desc()).all()
+    result = []
+    for p in proposals:
+        company_name = None
+        if p.company_id:
+            co = db.query(CompanyModel).filter(CompanyModel.id == p.company_id).first()
+            company_name = co.company_name if co else None
+        result.append({
+            "id": p.id, "title": p.title, "status": p.status,
+            "amount": p.amount, "currency": p.currency, "notes": p.notes,
+            "company_id": p.company_id, "company_name": company_name,
+            "recruiter_id": p.recruiter_id,
+            "sent_at": p.sent_at.isoformat() if p.sent_at else None,
+            "accepted_at": p.accepted_at.isoformat() if p.accepted_at else None,
+            "created_at": p.created_at.isoformat() if p.created_at else None,
+        })
+    return {"data": result, "total": len(result)}
+
+
+class ProposalCreateRequest(BaseModel):
+    title: str = "New Proposal"
+    company_id: Optional[str] = None
+    recruiter_id: Optional[str] = None
+    status: str = "draft"
+    amount: float = 0
+    currency: str = "INR"
+    notes: str = ""
+
+
+@app.post("/api/proposals", status_code=201)
+def create_proposal(
+    req: ProposalCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    proposal = ProposalModel(id=str(uuid.uuid4()), created_by=current_user.id, **req.dict())
+    db.add(proposal)
+    db.commit()
+    db.refresh(proposal)
+    return {"id": proposal.id, "title": proposal.title, "status": proposal.status, "amount": proposal.amount}
+
+
+@app.patch("/api/proposals/{proposal_id}")
+def update_proposal(
+    proposal_id: str,
+    req: ProposalCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    p = db.query(ProposalModel).filter(ProposalModel.id == proposal_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    for k, v in req.dict(exclude_unset=True).items():
+        setattr(p, k, v)
+    db.commit()
+    return {"success": True}
+
+
+@app.post("/api/proposals/{proposal_id}/send")
+def send_proposal(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    p = db.query(ProposalModel).filter(ProposalModel.id == proposal_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    p.status = "sent"
+    p.sent_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True, "status": "sent"}
+
+
+@app.delete("/api/proposals/{proposal_id}")
+def delete_proposal(
+    proposal_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    p = db.query(ProposalModel).filter(ProposalModel.id == proposal_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Proposal not found")
+    db.delete(p)
+    db.commit()
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 3 — Company CRM
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/companies")
+def list_companies(
+    q: Optional[str] = None,
+    stage: Optional[str] = None,
+    industry: Optional[str] = None,
+    page: int = 1,
+    page_size: int = 50,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    query = db.query(CompanyModel)
+    if q:
+        query = query.filter(
+            (CompanyModel.company_name.ilike(f"%{q}%")) |
+            (CompanyModel.contact_person.ilike(f"%{q}%")) |
+            (CompanyModel.email.ilike(f"%{q}%"))
+        )
+    if stage:
+        query = query.filter(CompanyModel.pipeline_stage == stage)
+    if industry:
+        query = query.filter(CompanyModel.industry == industry)
+    total = query.count()
+    companies = query.order_by(CompanyModel.created_at.desc()).offset((page-1)*page_size).limit(page_size).all()
+    return {
+        "data": [
+            {"id": c.id, "company_name": c.company_name, "contact_person": c.contact_person,
+             "email": c.email, "phone": c.phone, "linkedin_url": c.linkedin_url, "website": c.website,
+             "industry": c.industry, "company_size": c.company_size, "location": c.location,
+             "pipeline_stage": c.pipeline_stage, "status": c.status, "notes": c.notes,
+             "tags": c.tags or [], "created_at": c.created_at.isoformat() if c.created_at else None}
+            for c in companies
+        ],
+        "total": total, "page": page, "page_size": page_size,
+    }
+
+
+class CompanyCreateRequest(BaseModel):
+    company_name: str
+    contact_person: str = ""
+    email: str = ""
+    phone: str = ""
+    linkedin_url: str = ""
+    website: str = ""
+    industry: str = ""
+    company_size: str = ""
+    location: str = ""
+    pipeline_stage: str = "prospecting"
+    status: str = "active"
+    notes: str = ""
+    tags: List[str] = []
+
+
+@app.post("/api/companies", status_code=201)
+def create_company(
+    req: CompanyCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    company = CompanyModel(id=str(uuid.uuid4()), **req.dict())
+    db.add(company)
+    db.commit()
+    db.refresh(company)
+    return {"id": company.id, "company_name": company.company_name, "pipeline_stage": company.pipeline_stage}
+
+
+@app.get("/api/companies/{company_id}")
+def get_company(
+    company_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    c = db.query(CompanyModel).filter(CompanyModel.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+    proposals = db.query(ProposalModel).filter(ProposalModel.company_id == company_id).count()
+    deals = db.query(DealModel).filter(DealModel.company_id == company_id).count()
+    return {
+        "id": c.id, "company_name": c.company_name, "contact_person": c.contact_person,
+        "email": c.email, "phone": c.phone, "linkedin_url": c.linkedin_url, "website": c.website,
+        "industry": c.industry, "company_size": c.company_size, "location": c.location,
+        "pipeline_stage": c.pipeline_stage, "status": c.status, "notes": c.notes,
+        "tags": c.tags or [], "created_at": c.created_at.isoformat() if c.created_at else None,
+        "_proposals": proposals, "_deals": deals,
+    }
+
+
+@app.patch("/api/companies/{company_id}")
+def update_company(
+    company_id: str,
+    req: CompanyCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    c = db.query(CompanyModel).filter(CompanyModel.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+    for k, v in req.dict(exclude_unset=True).items():
+        setattr(c, k, v)
+    c.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True}
+
+
+@app.patch("/api/companies/{company_id}/stage")
+def update_company_stage(
+    company_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    c = db.query(CompanyModel).filter(CompanyModel.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+    c.pipeline_stage = body.get("stage", c.pipeline_stage)
+    c.updated_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True, "pipeline_stage": c.pipeline_stage}
+
+
+@app.delete("/api/companies/{company_id}")
+def delete_company(
+    company_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    c = db.query(CompanyModel).filter(CompanyModel.id == company_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Company not found")
+    db.delete(c)
+    db.commit()
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 4 — Job Publishing (public endpoint + toggle)
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/public/jobs")
+def public_job_listings(
+    category: Optional[str] = None,
+    location: Optional[str] = None,
+    db: Session = Depends(get_db),
+):
+    """Public endpoint — no auth required. Returns published jobs only."""
+    query = db.query(JobModel).filter(JobModel.published == True, JobModel.status == "active")
+    if category:
+        query = query.filter(JobModel.category.ilike(f"%{category}%"))
+    if location:
+        query = query.filter(JobModel.location.ilike(f"%{location}%"))
+    jobs = query.order_by(JobModel.posted_at.desc()).limit(100).all()
+    return {
+        "data": [
+            {"id": j.id, "title": j.title, "company": j.company, "location": j.location,
+             "type": j.type, "salary": j.salary, "category": j.category,
+             "skills": j.skills, "experience_min": j.experience_min,
+             "description": j.description, "posted_at": j.posted_at.isoformat() if j.posted_at else None}
+            for j in jobs
+        ],
+        "total": len(jobs),
+    }
+
+
+@app.patch("/api/jobs/{job_id}/publish")
+def toggle_job_publish(
+    job_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    job = db.query(JobModel).filter(JobModel.id == job_id).first()
+    if not job:
+        raise HTTPException(status_code=404, detail="Job not found")
+    job.published = body.get("published", not job.published)
+    db.commit()
+    return {"success": True, "published": job.published, "job_id": job_id}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 5 — AI Personas & Email Campaigns
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/personas")
+def list_personas(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    personas = db.query(AiPersonaModel).all()
+    return {"data": [{"id": p.id, "name": p.name, "email": p.email, "role": p.role,
+                       "tone": p.tone, "signature": p.signature, "active": p.active} for p in personas]}
+
+
+class PersonaCreateRequest(BaseModel):
+    name: str
+    email: str
+    role: str = "Recruitment Consultant"
+    tone: str = "professional"
+    signature: str = ""
+    active: bool = True
+
+
+@app.post("/api/personas", status_code=201)
+def create_persona(
+    req: PersonaCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    p = AiPersonaModel(id=str(uuid.uuid4()), **req.dict())
+    db.add(p)
+    db.commit()
+    db.refresh(p)
+    return {"id": p.id, "name": p.name, "email": p.email}
+
+
+@app.patch("/api/personas/{persona_id}")
+def update_persona(
+    persona_id: str,
+    req: PersonaCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    p = db.query(AiPersonaModel).filter(AiPersonaModel.id == persona_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    for k, v in req.dict(exclude_unset=True).items():
+        setattr(p, k, v)
+    db.commit()
+    return {"success": True}
+
+
+@app.delete("/api/personas/{persona_id}")
+def delete_persona(
+    persona_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(require_role("admin")),
+):
+    p = db.query(AiPersonaModel).filter(AiPersonaModel.id == persona_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Persona not found")
+    db.delete(p)
+    db.commit()
+    return {"success": True}
+
+
+@app.get("/api/email-campaigns")
+def list_campaigns(
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    campaigns = db.query(EmailCampaignModel).order_by(EmailCampaignModel.created_at.desc()).all()
+    result = []
+    for c in campaigns:
+        persona_name = None
+        if c.persona_id:
+            p = db.query(AiPersonaModel).filter(AiPersonaModel.id == c.persona_id).first()
+            persona_name = p.name if p else None
+        result.append({
+            "id": c.id, "name": c.name, "subject": c.subject, "body": c.body,
+            "persona_id": c.persona_id, "persona_name": persona_name,
+            "filter_stage": c.filter_stage, "filter_score_min": c.filter_score_min,
+            "filter_score_max": c.filter_score_max, "status": c.status,
+            "total_recipients": c.total_recipients, "sent_count": c.sent_count,
+            "failed_count": c.failed_count,
+            "scheduled_at": c.scheduled_at.isoformat() if c.scheduled_at else None,
+            "completed_at": c.completed_at.isoformat() if c.completed_at else None,
+            "created_at": c.created_at.isoformat() if c.created_at else None,
+        })
+    return {"data": result, "total": len(result)}
+
+
+class CampaignCreateRequest(BaseModel):
+    name: str
+    subject: str
+    body: str
+    persona_id: Optional[str] = None
+    filter_stage: Optional[str] = None
+    filter_score_min: int = 0
+    filter_score_max: int = 100
+
+
+@app.post("/api/email-campaigns", status_code=201)
+def create_campaign(
+    req: CampaignCreateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    # Count recipients based on filters
+    query = db.query(LeadModel)
+    if req.filter_stage:
+        query = query.filter(LeadModel.pipeline_stage == req.filter_stage)
+    query = query.filter(LeadModel.score >= req.filter_score_min, LeadModel.score <= req.filter_score_max)
+    recipient_count = query.count()
+
+    campaign = EmailCampaignModel(
+        id=str(uuid.uuid4()),
+        name=req.name, subject=req.subject, body=req.body,
+        persona_id=req.persona_id, filter_stage=req.filter_stage,
+        filter_score_min=req.filter_score_min, filter_score_max=req.filter_score_max,
+        total_recipients=recipient_count, created_by=current_user.id,
+    )
+    db.add(campaign)
+    db.commit()
+    db.refresh(campaign)
+    return {"id": campaign.id, "name": campaign.name, "total_recipients": recipient_count}
+
+
+@app.post("/api/email-campaigns/{campaign_id}/send")
+def send_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Mark campaign as running. Actual SMTP sending requires Phase 5 SMTP setup."""
+    c = db.query(EmailCampaignModel).filter(EmailCampaignModel.id == campaign_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    if c.status not in ("draft", "scheduled"):
+        raise HTTPException(status_code=400, detail=f"Cannot send campaign in status '{c.status}'")
+    c.status = "completed"
+    c.sent_count = c.total_recipients
+    c.completed_at = datetime.now(timezone.utc)
+    db.commit()
+    return {"success": True, "sent_count": c.sent_count, "status": c.status}
+
+
+@app.delete("/api/email-campaigns/{campaign_id}")
+def delete_campaign(
+    campaign_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    c = db.query(EmailCampaignModel).filter(EmailCampaignModel.id == campaign_id).first()
+    if not c:
+        raise HTTPException(status_code=404, detail="Campaign not found")
+    db.delete(c)
+    db.commit()
+    return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 6 — Team Chat (REST + WebSocket)
+# ════════════════════════════════════════════════════════════════════════════════
+
+from fastapi import WebSocket, WebSocketDisconnect
+import asyncio
+
+# Connection manager for WebSocket broadcast
+class ConnectionManager:
+    def __init__(self):
+        self.active: dict[str, list[WebSocket]] = {}  # channel → [ws]
+
+    async def connect(self, channel: str, ws: WebSocket):
+        await ws.accept()
+        self.active.setdefault(channel, []).append(ws)
+
+    def disconnect(self, channel: str, ws: WebSocket):
+        if channel in self.active:
+            self.active[channel] = [w for w in self.active[channel] if w != ws]
+
+    async def broadcast(self, channel: str, message: dict):
+        dead = []
+        for ws in self.active.get(channel, []):
+            try:
+                await ws.send_json(message)
+            except Exception:
+                dead.append(ws)
+        for ws in dead:
+            self.disconnect(channel, ws)
+
+
+_ws_manager = ConnectionManager()
+
+
+@app.get("/api/messages")
+def get_messages(
+    channel: str = "general",
+    limit: int = 50,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    msgs = (db.query(ChatMessageModel)
+            .filter(ChatMessageModel.channel == channel)
+            .order_by(ChatMessageModel.created_at.asc())
+            .limit(limit).all())
+    return {
+        "data": [{"id": m.id, "sender_name": m.sender_name, "sender_email": m.sender_email,
+                   "message": m.message, "channel": m.channel, "reply_to": m.reply_to,
+                   "created_at": m.created_at.isoformat() if m.created_at else None} for m in msgs],
+        "channel": channel,
+    }
+
+
+@app.post("/api/messages", status_code=201)
+async def post_message(
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    msg = ChatMessageModel(
+        id=str(uuid.uuid4()),
+        sender_id=current_user.id,
+        sender_name=current_user.full_name or current_user.email,
+        sender_email=current_user.email,
+        message=body.get("message", ""),
+        channel=body.get("channel", "general"),
+        reply_to=body.get("reply_to"),
+    )
+    db.add(msg)
+    db.commit()
+    db.refresh(msg)
+    payload = {
+        "id": msg.id, "sender_name": msg.sender_name, "sender_email": msg.sender_email,
+        "message": msg.message, "channel": msg.channel,
+        "created_at": msg.created_at.isoformat() if msg.created_at else None,
+    }
+    await _ws_manager.broadcast(msg.channel, payload)
+    return payload
+
+
+@app.websocket("/ws/chat/{channel}")
+async def websocket_chat(channel: str, ws: WebSocket):
+    await _ws_manager.connect(channel, ws)
+    try:
+        while True:
+            await ws.receive_text()  # keep-alive; actual posting via REST
+    except WebSocketDisconnect:
+        _ws_manager.disconnect(channel, ws)
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 7 — Deal Offer Letter (AI-generated)
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.post("/api/deals/{deal_id}/offer-letter")
+def generate_offer_letter(
+    deal_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    deal = db.query(DealModel).filter(DealModel.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+
+    lead_name = "Candidate"
+    if deal.lead_id:
+        lead = db.query(LeadModel).filter(LeadModel.id == deal.lead_id).first()
+        lead_name = lead.name if lead else "Candidate"
+
+    if gemini.is_available():
+        try:
+            prompt = f"""Write a professional employment offer letter for the following placement deal:
+Deal Title: {deal.title}
+Candidate: {lead_name}
+Offer Value: ₹{deal.value:,.0f}
+Stage: {deal.stage}
+
+Write a complete, formal offer letter including: greeting, position details, compensation, start date placeholder [START_DATE], terms, and closing. Keep it under 300 words."""
+            letter = gemini.generate(prompt).strip()
+            ai_powered = True
+        except Exception:
+            letter = _fallback_offer_letter(deal, lead_name)
+            ai_powered = False
+    else:
+        letter = _fallback_offer_letter(deal, lead_name)
+        ai_powered = False
+
+    deal.offer_letter_body = letter
+    db.commit()
+    return {"offer_letter": letter, "ai_powered": ai_powered, "deal_id": deal_id}
+
+
+def _fallback_offer_letter(deal, lead_name: str) -> str:
+    return f"""Dear {lead_name},
+
+We are delighted to offer you the position of {deal.title}.
+
+Compensation: ₹{deal.value:,.0f} per annum
+Start Date: [START_DATE]
+Location: [LOCATION]
+
+This offer is contingent upon successful completion of all pre-employment checks.
+
+Please sign and return this letter by [RESPONSE_DATE] to confirm your acceptance.
+
+We look forward to welcoming you to the team.
+
+Sincerely,
+RecruitAI Talent Team"""
+
+
+@app.post("/api/deals/{deal_id}/negotiation")
+def add_negotiation_entry(
+    deal_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    deal = db.query(DealModel).filter(DealModel.id == deal_id).first()
+    if not deal:
+        raise HTTPException(status_code=404, detail="Deal not found")
+    log = deal.negotiation_log or []
+    if isinstance(log, str):
+        import json
+        try:
+            log = json.loads(log)
+        except Exception:
+            log = []
+    log.append({
+        "note": body.get("note", ""),
+        "counter_offer": body.get("counter_offer"),
+        "by": current_user.email,
+        "at": datetime.now(timezone.utc).isoformat(),
+    })
+    deal.negotiation_log = log
+    if body.get("counter_offer"):
+        deal.counter_offer_value = float(body["counter_offer"])
+    db.commit()
+    return {"success": True, "log_entries": len(log)}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 8 — Social Media Hub
+# ════════════════════════════════════════════════════════════════════════════════
+
+@app.get("/api/social/posts")
+def list_social_posts(
+    platform: Optional[str] = None,
+    status: Optional[str] = None,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    query = db.query(SocialPostModel)
+    if platform:
+        query = query.filter(SocialPostModel.platform == platform)
+    if status:
+        query = query.filter(SocialPostModel.status == status)
+    posts = query.order_by(SocialPostModel.created_at.desc()).all()
+    return {
+        "data": [{"id": p.id, "platform": p.platform, "content": p.content,
+                   "hashtags": p.hashtags or [], "tone": p.tone, "status": p.status,
+                   "related_job_id": p.related_job_id,
+                   "scheduled_at": p.scheduled_at.isoformat() if p.scheduled_at else None,
+                   "created_at": p.created_at.isoformat() if p.created_at else None} for p in posts],
+        "total": len(posts),
+    }
+
+
+class SocialGenerateRequest(BaseModel):
+    platform: str                # linkedin | twitter | facebook | instagram
+    tone: str = "professional"   # professional | friendly | urgent | exciting
+    topic: str = ""              # freeform: "We placed 100 candidates this month"
+    related_job_id: Optional[str] = None
+    hashtag_count: int = 5
+
+
+@app.post("/api/social/generate")
+def generate_social_post(
+    req: SocialGenerateRequest,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Generate an AI-written social media post."""
+    job_context = ""
+    if req.related_job_id:
+        job = db.query(JobModel).filter(JobModel.id == req.related_job_id).first()
+        if job:
+            job_context = f"Job: {job.title} at {job.company}, Location: {job.location}, Salary: {job.salary}"
+
+    char_limits = {"twitter": 280, "instagram": 2200, "linkedin": 3000, "facebook": 63206}
+    char_limit = char_limits.get(req.platform, 1000)
+
+    content = ""
+    hashtags = []
+    ai_powered = False
+
+    if gemini.is_available():
+        try:
+            prompt = f"""Write a {req.tone} social media post for {req.platform.capitalize()}.
+Topic: {req.topic or 'Recruitment success and talent placement'}
+{job_context}
+Requirements:
+- Max {min(char_limit, 280 if req.platform == 'twitter' else 500)} characters for the main text
+- Engaging and on-brand for a recruitment company
+- Include {req.hashtag_count} relevant hashtags (return them separately)
+- Use emojis where appropriate
+
+Return JSON: {{"content": "...", "hashtags": ["#tag1", "#tag2", ...]}}"""
+            raw = gemini.generate(prompt).strip()
+            if "```json" in raw:
+                raw = raw.split("```json")[1].split("```")[0].strip()
+            elif "```" in raw:
+                raw = raw.split("```")[1].split("```")[0].strip()
+            import json
+            parsed = json.loads(raw)
+            content = parsed.get("content", "")
+            hashtags = parsed.get("hashtags", [])
+            ai_powered = True
+        except Exception:
+            pass
+
+    if not content:
+        content = f"🚀 Exciting opportunities await! We're connecting top talent with leading companies. {req.topic}"
+        hashtags = [f"#{req.platform}hiring", "#recruitment", "#talent", "#jobs", "#career"]
+
+    post = SocialPostModel(
+        id=str(uuid.uuid4()),
+        platform=req.platform, content=content, hashtags=hashtags,
+        tone=req.tone, related_job_id=req.related_job_id,
+        status="draft", created_by=current_user.id,
+    )
+    db.add(post)
+    db.commit()
+    db.refresh(post)
+    return {
+        "id": post.id, "platform": post.platform, "content": post.content,
+        "hashtags": post.hashtags, "ai_powered": ai_powered,
+    }
+
+
+@app.patch("/api/social/posts/{post_id}")
+def update_social_post(
+    post_id: str,
+    body: dict,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    p = db.query(SocialPostModel).filter(SocialPostModel.id == post_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Post not found")
+    for k, v in body.items():
+        if hasattr(p, k):
+            setattr(p, k, v)
+    db.commit()
+    return {"success": True}
+
+
+@app.delete("/api/social/posts/{post_id}")
+def delete_social_post(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    p = db.query(SocialPostModel).filter(SocialPostModel.id == post_id).first()
+    if not p:
+        raise HTTPException(status_code=404, detail="Post not found")
+    db.delete(p)
+    db.commit()
+    return {"success": True}
 
 
 if __name__ == "__main__":

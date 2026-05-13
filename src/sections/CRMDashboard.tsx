@@ -32,7 +32,7 @@ import {
   Pie,
   Cell
 } from 'recharts';
-import { jobService, leadService, recruiterService, dealService, paymentService } from '@/services';
+import apiClient from '@/services/api';
 import { toast } from 'sonner';
 
 // Mock data for charts (will be enhanced with real data later)

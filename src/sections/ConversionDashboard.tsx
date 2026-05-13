@@ -1,133 +1,187 @@
-import { useState, useEffect } from 'react';
-import { 
-  Zap, 
-  ArrowRight, 
-  CheckCircle2, 
-  Users, 
-  Handshake, 
-  TrendingUp,
-  Filter,
-  Search,
-  RefreshCw
+import { useState, useEffect, useCallback } from 'react';
+import {
+  Zap, ArrowRight, CheckCircle2, Users, TrendingUp,
+  RefreshCw, BarChart3, Target
 } from 'lucide-react';
 import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Badge } from '@/components/ui/badge';
 import { Progress } from '@/components/ui/progress';
+import {
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip,
+  ResponsiveContainer, LineChart, Line
+} from 'recharts';
+import apiClient from '@/services/api';
 import { toast } from 'sonner';
 
+interface ConversionData {
+  funnel: { stage: string; count: number }[];
+  conversion_rate: number;
+  total_leads: number;
+  total_hired: number;
+  weekly_trend: { week: string; leads: number; conversions: number }[];
+  ai_powered: boolean;
+}
+
+const STAGE_COLORS = [
+  'bg-blue-500', 'bg-violet-500', 'bg-amber-500', 'bg-emerald-500', 'bg-cyan-500',
+];
+
 export function ConversionDashboard() {
+  const [data, setData] = useState<ConversionData | null>(null);
   const [loading, setLoading] = useState(true);
 
-  useEffect(() => {
-    setTimeout(() => setLoading(false), 1000);
+  const fetchData = useCallback(async () => {
+    setLoading(true);
+    try {
+      const res = await apiClient.get('/api/analytics/conversion');
+      setData(res.data);
+    } catch {
+      toast.error('Failed to load conversion data');
+    } finally {
+      setLoading(false);
+    }
   }, []);
+
+  useEffect(() => { fetchData(); }, [fetchData]);
+
+  if (loading) {
+    return (
+      <div className="flex items-center justify-center min-h-[400px]">
+        <div className="animate-spin w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full" />
+      </div>
+    );
+  }
+
+  const maxCount = Math.max(...(data?.funnel ?? []).map(f => f.count), 1);
 
   return (
     <div className="space-y-6">
+      {/* Header */}
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">Conversion Dashboard</h2>
-          <p className="text-zinc-400">Automated Lead-to-Deal tracking</p>
+          <p className="text-zinc-400 text-sm mt-1">Lead-to-hire funnel analytics from live data</p>
         </div>
-        <div className="flex gap-2">
-          <Button variant="outline" size="sm" className="border-white/10">
-            <Filter className="w-4 h-4 mr-2" />
-            Filter
-          </Button>
-          <Button size="sm" className="gradient-primary">
-            <RefreshCw className="w-4 h-4 mr-2" />
-            Auto-Sync
-          </Button>
-        </div>
+        <Button variant="outline" size="sm" className="border-white/10 text-zinc-400" onClick={fetchData}>
+          <RefreshCw className="w-4 h-4 mr-2" />Refresh
+        </Button>
       </div>
 
-      <div className="grid grid-cols-1 md:grid-cols-4 gap-4">
-        <Card className="bg-[#1a1a1a] border-white/6">
+      {/* KPI Row */}
+      <div className="grid grid-cols-3 gap-4">
+        <Card className="bg-[#111] border-white/6">
           <CardContent className="p-4">
-            <p className="text-zinc-500 text-xs font-medium uppercase mb-1">Total Leads</p>
-            <div className="flex items-end justify-between">
-              <p className="text-2xl font-bold text-white">1,284</p>
-              <span className="text-emerald-400 text-xs flex items-center mb-1">
-                <TrendingUp className="w-3 h-3 mr-1" />
-                +12%
-              </span>
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-violet-500/10 flex items-center justify-center">
+                <Users className="w-5 h-5 text-violet-400" />
+              </div>
+              <div>
+                <p className="text-zinc-400 text-xs">Total Leads</p>
+                <p className="text-white text-2xl font-bold">{data?.total_leads ?? 0}</p>
+              </div>
             </div>
-            <Progress value={75} className="h-1 mt-3 bg-white/5" indicatorClassName="bg-violet-500" />
           </CardContent>
         </Card>
-        {/* Similar cards for Matched, Proposals, Deals */}
+        <Card className="bg-[#111] border-white/6">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-emerald-500/10 flex items-center justify-center">
+                <CheckCircle2 className="w-5 h-5 text-emerald-400" />
+              </div>
+              <div>
+                <p className="text-zinc-400 text-xs">Total Hired</p>
+                <p className="text-white text-2xl font-bold">{data?.total_hired ?? 0}</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
+        <Card className="bg-[#111] border-white/6">
+          <CardContent className="p-4">
+            <div className="flex items-center gap-3">
+              <div className="w-10 h-10 rounded-xl bg-amber-500/10 flex items-center justify-center">
+                <Target className="w-5 h-5 text-amber-400" />
+              </div>
+              <div>
+                <p className="text-zinc-400 text-xs">Conversion Rate</p>
+                <p className="text-white text-2xl font-bold">{data?.conversion_rate ?? 0}%</p>
+              </div>
+            </div>
+          </CardContent>
+        </Card>
       </div>
 
-      <div className="grid grid-cols-1 lg:grid-cols-3 gap-6">
-        <Card className="lg:col-span-2 bg-[#1a1a1a] border-white/6 overflow-hidden">
-          <CardHeader className="border-b border-white/6">
-            <CardTitle className="text-sm font-semibold flex items-center gap-2">
-              <Zap className="w-4 h-4 text-amber-400" />
-              Live Conversion Stream
-            </CardTitle>
-          </CardHeader>
-          <CardContent className="p-0">
-            <div className="divide-y divide-white/6">
-              {[1, 2, 3, 4, 5].map((i) => (
-                <div key={i} className="p-4 flex items-center justify-between hover:bg-white/5 transition-colors group">
-                  <div className="flex items-center gap-3">
-                    <div className="w-8 h-8 rounded-full bg-violet-600/20 flex items-center justify-center text-[10px] font-bold text-violet-400">
-                      JS
+      {/* Funnel */}
+      <Card className="bg-[#111] border-white/6">
+        <CardHeader className="pb-2">
+          <CardTitle className="text-white text-sm font-medium flex items-center gap-2">
+            <Zap className="w-4 h-4 text-violet-400" />
+            Recruitment Funnel
+          </CardTitle>
+        </CardHeader>
+        <CardContent>
+          {(data?.funnel ?? []).length === 0 ? (
+            <p className="text-zinc-500 text-sm text-center py-8">No pipeline data yet</p>
+          ) : (
+            <div className="space-y-3">
+              {data!.funnel.map((stage, i) => {
+                const pct = Math.round(stage.count / maxCount * 100);
+                return (
+                  <div key={stage.stage} className="flex items-center gap-4">
+                    <div className="w-28 text-right shrink-0">
+                      <span className="text-zinc-300 text-sm font-medium">{stage.stage}</span>
                     </div>
-                    <div>
-                      <p className="text-sm font-medium text-white">John Smith matched with Google</p>
-                      <p className="text-[10px] text-zinc-500">2 minutes ago • Score: 92/100</p>
+                    <div className="flex-1">
+                      <div className="flex items-center gap-2">
+                        <Progress value={pct} className="h-6 bg-white/5 flex-1"
+                          style={{ '--progress-color': STAGE_COLORS[i] } as React.CSSProperties} />
+                        <span className="text-white text-sm font-semibold w-6 text-right">{stage.count}</span>
+                      </div>
                     </div>
+                    {i < (data!.funnel.length - 1) && (
+                      <ArrowRight className="w-4 h-4 text-zinc-600 shrink-0" />
+                    )}
                   </div>
-                  <div className="flex items-center gap-4">
-                    <div className="hidden sm:flex flex-col items-end">
-                      <Badge className="bg-emerald-600/20 text-emerald-400 text-[10px] py-0 px-1">Matched</Badge>
-                    </div>
-                    <ArrowRight className="w-4 h-4 text-zinc-600 group-hover:text-white transition-colors" />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Weekly Trend */}
+      <div className="grid grid-cols-1 lg:grid-cols-2 gap-6">
+        <Card className="bg-[#111] border-white/6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-white text-sm font-medium">Weekly Leads</CardTitle>
+          </CardHeader>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <BarChart data={data?.weekly_trend ?? []} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                <XAxis dataKey="week" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #ffffff10', borderRadius: 8 }} labelStyle={{ color: '#fff' }} />
+                <Bar dataKey="leads" fill="#7c3aed" radius={[4, 4, 0, 0]} name="Leads" />
+                <Bar dataKey="conversions" fill="#10b981" radius={[4, 4, 0, 0]} name="Conversions" />
+              </BarChart>
+            </ResponsiveContainer>
           </CardContent>
-          <div className="p-3 bg-black/20 text-center border-t border-white/6">
-            <Button variant="ghost" size="sm" className="text-xs text-zinc-500 hover:text-white">View Full Stream</Button>
-          </div>
         </Card>
 
-        <Card className="bg-[#1a1a1a] border-white/6">
-          <CardHeader>
-            <CardTitle className="text-sm font-semibold">Conversion Funnel</CardTitle>
+        <Card className="bg-[#111] border-white/6">
+          <CardHeader className="pb-2">
+            <CardTitle className="text-white text-sm font-medium">Conversion Trend</CardTitle>
           </CardHeader>
-          <CardContent className="space-y-6">
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <span className="text-zinc-400">Leads Captured</span>
-                <span className="text-white">100% (1,284)</span>
-              </div>
-              <Progress value={100} className="h-2 bg-white/5" indicatorClassName="bg-violet-600" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <span className="text-zinc-400">Leads Matched</span>
-                <span className="text-white">65% (835)</span>
-              </div>
-              <Progress value={65} className="h-2 bg-white/5" indicatorClassName="bg-cyan-500" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <span className="text-zinc-400">Proposals Sent</span>
-                <span className="text-white">42% (539)</span>
-              </div>
-              <Progress value={42} className="h-2 bg-white/5" indicatorClassName="bg-blue-500" />
-            </div>
-            <div className="space-y-2">
-              <div className="flex justify-between text-xs font-medium">
-                <span className="text-zinc-400">Deals Closed</span>
-                <span className="text-white">18% (231)</span>
-              </div>
-              <Progress value={18} className="h-2 bg-white/5" indicatorClassName="bg-emerald-500" />
-            </div>
+          <CardContent>
+            <ResponsiveContainer width="100%" height={200}>
+              <LineChart data={data?.weekly_trend ?? []} margin={{ top: 5, right: 5, left: -20, bottom: 0 }}>
+                <CartesianGrid strokeDasharray="3 3" stroke="#ffffff08" />
+                <XAxis dataKey="week" tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <YAxis tick={{ fill: '#71717a', fontSize: 11 }} axisLine={false} tickLine={false} />
+                <Tooltip contentStyle={{ backgroundColor: '#1a1a1a', border: '1px solid #ffffff10', borderRadius: 8 }} labelStyle={{ color: '#fff' }} />
+                <Line type="monotone" dataKey="conversions" stroke="#10b981" strokeWidth={2} dot={{ fill: '#10b981', r: 3 }} name="Conversions" />
+              </LineChart>
+            </ResponsiveContainer>
           </CardContent>
         </Card>
       </div>

@@ -63,3 +63,9 @@ externalPort = 8000
 deploymentTarget = "static"
 build = ["npm", "run", "build"]
 publicDir = "dist"
+
+[userenv]
+
+[userenv.shared]
+SECRET_KEY = "87226720658cb759123c7a026c3db911e29f31ff0b7c72639166c77bd12f755a"
+ALLOWED_ORIGINS = "http://localhost:5173,http://localhost:5000"

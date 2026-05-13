@@ -1,0 +1,119 @@
+You are the Replit Agent working on the "RecruiteAI" project.
+Read FULL_AUDIT_REPORT.md first. Use it as your checklist.
+
+Goal: Build a fully functional, production‑ready AI recruitment platform that powers the job board overseasjob.in. The platform must include:
+
+1. Multi‑tenant (agencies/companies).
+2. Internal users (recruiters, admins) who manage everything.
+3. **Company CRM** to track prospective client companies (approached via LinkedIn manually), with pipeline stages (Prospecting → Contacted → Permission Granted → Active Partner).
+4. **Job Management** with AI JD generator and ability to publish jobs to a public API for overseasjob.in.
+5. Candidate (Lead) management, resume parsing, matching, Kanban pipeline.
+6. Real email outreach to candidates via Hostinger SMTP using AI personas.
+7. Bulk email campaigns.
+8. Internal team chat (WebSocket).
+9. Deals with companies (negotiation, offer letters, follow‑up automation).
+10. Social Media Content Hub (generate only, no posting).
+11. Full database seeding and portability.
+12. No mock data, no hardcoded sections, no Docker/CI‑CD.
+
+Execute these phases in strict order. After each phase, perform a quick manual test (as described) before moving on. Fix any failure immediately.
+
+### PHASE 0: CONFIRMATION
+- Read the entire codebase + audit. Confirm readiness in PHASE0_CONFIRM.md.
+
+### PHASE 1: CRITICAL FIXES & FOUNDATION
+1. Fix CRMDashboard.tsx endpoint to /api/stats.
+2. SECRET_KEY: env var only; fail if missing.
+3. CORS: ALLOWED_ORIGINS env, default localhost:5173 + Replit URL, no wildcard with credentials.
+4. Delete duplicate _render_template, dead _old.tsx files, unused RecruiterAcquisition.tsx. Fix import order.
+5. Create .env.example.
+6. Add /api/auth/refresh (token refresh). Frontend interceptor uses it on 401.
+7. Implement React Router (replace activeSection). Route all sections, add 404, protect routes.
+8. Install TanStack Query, wrap app, replace manual fetch patterns.
+9. Install React Hook Form + Zod, update all forms with validation and error display.
+10. Add React Error Boundaries around each route.
+
+Test: Login, navigate to 5 random sections, no console errors.
+
+### PHASE 2: WIRE ALL MOCK SECTIONS
+- Create missing backend endpoints (traffic, follow‑up sequences, proposals, revenue trend, conversion funnel, lead‑forms, automation flow, risk‑control, phase‑execution) using real data or realistic seeds.
+- Wire EmailTemplates.tsx to existing /api/templates.
+- Replace ALL hardcoded frontend data with API calls.
+
+Test: Every previously mock section now shows live data.
+
+### PHASE 3: COMPANY CRM (New)
+- Rename/repurpose the existing `recruiters` table into `companies` (or create new) with fields: id, company_name, contact_person, email, phone, linkedin_url, status, pipeline_stage (enum: prospecting, contacted, permission_granted, active_partner, inactive), notes, created_at.
+- Add endpoints:
+  - GET/POST/PATCH/DELETE /api/companies
+  - PATCH /api/companies/{id}/stage (move pipeline stage)
+- Update the Deal model to link to `company_id` (not recruiter_id).
+- Frontend: new section `/companies` with Kanban board for company pipeline stages. Add form to add company manually (later you can bulk import).
+
+Test: Add a company, move through stages, verify API.
+
+### PHASE 4: JOB PUBLISHING BRIDGE FOR OVERSEASJOB.IN
+- Add a boolean field `published` to jobs table (default false).
+- Create public (unauthenticated) endpoint: `GET /api/public/jobs` that returns all jobs where `published = true`. Include only necessary fields (title, company, location, description, skills, etc.).
+- In the job edit form (frontend), add a "Publish to overseasjob.in" toggle. When toggled on, set `published = true`.
+- Also add an option in Company CRM to auto‑publish all jobs of an active partner company.
+
+Test: From frontend, create a job, mark published, then access /api/public/jobs (without auth) and verify it returns the job.
+
+### PHASE 5: REAL EMAIL INTEGRATION (Hostinger SMTP)
+- Create `send_email_smtp()` utility using smtplib (SMTP_HOST, SMTP_PORT, SMTP_USER, SMTP_PASSWORD from Replit Secrets).
+- Replace mock sends in all outreach and email endpoints with real SMTP.
+- Build Bulk Email Campaign module (tables, endpoints, frontend /email-campaigns) with persona selector, filter by candidate stage/score, real sending.
+- Create `ai_personas` table and seed 6 personas (Priya, Arjun, etc., emails @overseasjob.in). Use in sender selection.
+- All email sends use persona's name/email via SMTP (auth as noreply@overseasjob.in).
+
+Test: Send a test email from outreach, verify delivery.
+
+### PHASE 6: INTERNAL TEAM CHAT (WebSocket)
+- Tables: conversations, messages.
+- REST + WebSocket for real‑time chat among logged‑in internal users.
+- Frontend /messages route, unread badge.
+
+Test: Chat between two users, real‑time update.
+
+### PHASE 7: DEALS & AUTOMATED FOLLOW‑UP
+- Extend deals (now linked to company_id): counter_offer_value, negotiation_log (JSON), offer_letter_url.
+- Offer letter generation via Gemini.
+- Install APScheduler, create scheduled_tasks table. Schedule follow‑up emails on deal/company pipeline changes, send real emails via SMTP.
+- Wire follow‑up sequences UI to new endpoints.
+
+Test: Move a company to "Active Partner", create a deal, send offer, verify follow‑up email scheduled and sent.
+
+### PHASE 8: SOCIAL MEDIA CONTENT HUB
+- social_posts table, /api/social/generate (Gemini), CRUD, scheduling, calendar view.
+- No external posting.
+
+Test: Generate a post, schedule.
+
+### PHASE 9: AI QUOTA, COMPLETE SEEDING & PORTABILITY
+- Enforce AI quota on ALL AI endpoints.
+- Comprehensive seed function: create an organization, 2 users (admin/recruiter), 3 companies in different stages, 5 jobs (some published), 10 leads with varied stages, 6 personas, sample templates, sample deals, sample social posts. Runs only if DB empty.
+- Remove .db from repo, add to .gitignore. Generate Alembic migration (initial) for documentation.
+- Update README, replit.md, FULL_AUDIT_REPORT.md.
+
+### PHASE 10: FULL END‑TO‑END TEST & FINAL REPORT
+Perform this complete journey:
+1. Register org admin, log in.
+2. Add a company (simulating a LinkedIn lead), move to "Permission Granted".
+3. Create a job for that company, enhance with AI JD generator, publish it.
+4. Verify /api/public/jobs returns that job (simulate overseasjob.in fetch).
+5. Add candidates (leads), upload resume, run matching.
+6. Move candidate through pipeline, send outreach email (real).
+7. Create bulk campaign for all "Screening" candidates and send.
+8. Internal chat between users.
+9. Create deal with company, add negotiation, generate offer letter, send.
+10. Verify follow‑up email scheduled and delivered.
+11. Generate social post.
+12. Check AI quota updates, settings, multi‑tenant isolation (add second org).
+13. Document all results in FINAL_TEST_REPORT.md with pass/fail for each step.
+
+Fix any failures, re‑test until all pass.
+
+Final output: a fully working RecruiteAI platform ready to connect to overseasjob.in.
+
+Now begin with Phase 0.
