@@ -2693,21 +2693,67 @@ def _render_template_vars(body: str, variables: Dict[str, str]) -> str:
     return body
 
 
+def _smtp_send(to_email: str, to_name: str, subject: str, body: str) -> dict:
+    """
+    Send a real email via Hostinger SMTP (noreply@overseasjob.in).
+    Returns {"ok": True} or {"ok": False, "error": "..."}.
+    """
+    import smtplib
+    import ssl
+    from email.mime.multipart import MIMEMultipart
+    from email.mime.text import MIMEText
+
+    smtp_host = os.getenv("SMTP_HOST", "smtp.hostinger.com")
+    smtp_port = int(os.getenv("SMTP_PORT", "587"))
+    smtp_user = os.getenv("SMTP_USERNAME", "noreply@overseasjob.in")
+    smtp_pass = os.getenv("SMTP_PASSWORD", "")
+    from_name = os.getenv("SMTP_FROM_NAME", "OverseasJob.in")
+
+    if not smtp_pass:
+        return {"ok": False, "error": "SMTP_PASSWORD not configured"}
+
+    msg = MIMEMultipart("alternative")
+    msg["Subject"] = subject
+    msg["From"]    = f"{from_name} <{smtp_user}>"
+    msg["To"]      = f"{to_name} <{to_email}>" if to_name else to_email
+    msg["Reply-To"] = smtp_user
+
+    # Plain-text fallback + HTML version
+    plain = body
+    html  = f"""<html><body style="font-family:Arial,sans-serif;color:#333;max-width:600px;margin:auto">
+<p>{body.replace(chr(10), '<br>')}</p>
+<hr style="margin-top:30px;border:none;border-top:1px solid #eee"/>
+<p style="font-size:12px;color:#999">OverseasJob.in · noreply@overseasjob.in</p>
+</body></html>"""
+    msg.attach(MIMEText(plain, "plain"))
+    msg.attach(MIMEText(html, "html"))
+
+    try:
+        ctx = ssl.create_default_context()
+        with smtplib.SMTP(smtp_host, smtp_port, timeout=15) as srv:
+            srv.ehlo()
+            srv.starttls(context=ctx)
+            srv.login(smtp_user, smtp_pass)
+            srv.sendmail(smtp_user, [to_email], msg.as_string())
+        logging.info(f"[EMAIL-SMTP] Sent → {to_email} | {subject}")
+        return {"ok": True}
+    except Exception as e:
+        logging.error(f"[EMAIL-SMTP] Failed → {to_email}: {e}")
+        return {"ok": False, "error": str(e)}
+
+
 @app.post("/api/email/send")
 def send_email(
     req: SendEmailRequest,
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """
-    Send an email (mock — logs to DB, prints to console).
-    In production, swap the mock block with an SMTP/Resend/SendGrid call.
-    """
+    """Send a real email via Hostinger SMTP and log it to DB."""
     subject = _render_template_vars(req.subject, req.variables)
-    body = _render_template_vars(req.body, req.variables)
+    body    = _render_template_vars(req.body, req.variables)
 
-    # ── Mock send (console) ──
-    logging.info(f"[EMAIL] To: {req.to_email} | Subject: {subject}")
+    result = _smtp_send(req.to_email, req.to_name or "", subject, body)
+    email_status = "sent" if result["ok"] else "failed"
 
     log = EmailLogModel(
         to_email=req.to_email,
@@ -2717,18 +2763,19 @@ def send_email(
         template_id=req.template_id,
         lead_id=req.lead_id,
         sent_by_id=current_user.id,
-        status="sent",
+        status=email_status,
     )
     db.add(log)
     db.commit()
     db.refresh(log)
     return {
         "id": log.id,
-        "status": "sent",
+        "status": email_status,
         "to": req.to_email,
         "subject": subject,
         "sent_at": log.sent_at.isoformat() if log.sent_at else None,
-        "note": "Email logged (mock). Integrate SMTP/Resend for real delivery.",
+        "smtp_ok": result["ok"],
+        "error": result.get("error"),
     }
 
 
@@ -3740,17 +3787,54 @@ def send_campaign(
     db: Session = Depends(get_db),
     current_user: UserModel = Depends(get_current_user),
 ):
-    """Mark campaign as running. Actual SMTP sending requires Phase 5 SMTP setup."""
+    """Send campaign emails via Hostinger SMTP to matched candidates."""
     c = db.query(EmailCampaignModel).filter(EmailCampaignModel.id == campaign_id).first()
     if not c:
         raise HTTPException(status_code=404, detail="Campaign not found")
     if c.status not in ("draft", "scheduled"):
         raise HTTPException(status_code=400, detail=f"Cannot send campaign in status '{c.status}'")
+
+    # Build recipient list from leads matching score/stage filters
+    lead_query = db.query(LeadModel)
+    if c.min_score:
+        lead_query = lead_query.filter(LeadModel.score >= c.min_score)
+    if c.target_stage:
+        lead_query = lead_query.filter(LeadModel.pipeline_stage == c.target_stage)
+    leads = lead_query.limit(500).all()
+
+    # Get persona for tone/signature
+    persona = None
+    if c.persona_id:
+        persona = db.query(AiPersonaModel).filter(AiPersonaModel.id == c.persona_id).first()
+
+    signature = f"\n\nBest regards,\n{persona.name if persona else 'OverseasJob.in Team'}\nOverseasJob.in"
+    subject = c.subject or "New Opportunity from OverseasJob.in"
+    body_template = c.body or "We have an exciting opportunity that matches your profile. Please reply to learn more."
+
+    sent = 0
+    failed = 0
+    for lead in leads:
+        if not lead.email:
+            continue
+        body = f"Dear {lead.name},\n\n{body_template}{signature}"
+        result = _smtp_send(lead.email, lead.name, subject, body)
+        if result["ok"]:
+            sent += 1
+        else:
+            failed += 1
+
     c.status = "completed"
-    c.sent_count = c.total_recipients
+    c.sent_count = sent
+    c.total_recipients = sent + failed
     c.completed_at = datetime.now(timezone.utc)
     db.commit()
-    return {"success": True, "sent_count": c.sent_count, "status": c.status}
+    return {
+        "success": True,
+        "sent_count": sent,
+        "failed_count": failed,
+        "status": c.status,
+        "smtp_enabled": bool(os.getenv("SMTP_PASSWORD")),
+    }
 
 
 @app.delete("/api/email-campaigns/{campaign_id}")
@@ -4076,6 +4160,197 @@ def delete_social_post(
     db.delete(p)
     db.commit()
     return {"success": True}
+
+
+# ════════════════════════════════════════════════════════════════════════════════
+# PHASE 8b — LinkedIn OAuth + Post Publishing
+# ════════════════════════════════════════════════════════════════════════════════
+
+import urllib.parse
+import requests as _requests
+
+_LINKEDIN_AUTH_URL  = "https://www.linkedin.com/oauth/v2/authorization"
+_LINKEDIN_TOKEN_URL = "https://www.linkedin.com/oauth/v2/accessToken"
+_LINKEDIN_API_BASE  = "https://api.linkedin.com/v2"
+
+# In-memory token store (survives the process; for prod use DB)
+_linkedin_tokens: dict = {}   # {"access_token": ..., "expires_at": ..., "person_urn": ...}
+
+
+def _li_client_id() -> str:
+    v = os.getenv("LINKEDIN_CLIENT_ID", "")
+    if not v:
+        raise HTTPException(400, "LINKEDIN_CLIENT_ID not configured")
+    return v
+
+
+def _li_client_secret() -> str:
+    v = os.getenv("LINKEDIN_CLIENT_SECRET", "")
+    if not v:
+        raise HTTPException(400, "LINKEDIN_CLIENT_SECRET not configured")
+    return v
+
+
+def _li_redirect_uri() -> str:
+    domain = os.getenv("REPLIT_DEV_DOMAIN") or os.getenv("REPLIT_DOMAINS", "localhost:8000").split(",")[0]
+    return f"https://{domain}/api/linkedin/callback"
+
+
+def _li_token_valid() -> bool:
+    tok = _linkedin_tokens.get("access_token")
+    exp = _linkedin_tokens.get("expires_at", 0)
+    return bool(tok) and datetime.now(timezone.utc).timestamp() < exp
+
+
+@app.get("/api/linkedin/status")
+def linkedin_status(_: UserModel = Depends(get_current_user)):
+    """Returns whether we have a valid LinkedIn access token."""
+    company_id = os.getenv("LINKEDIN_COMPANY_ID", "")
+    return {
+        "connected": _li_token_valid(),
+        "person_urn": _linkedin_tokens.get("person_urn"),
+        "company_id": company_id,
+        "company_page": f"https://www.linkedin.com/company/{company_id}/admin/dashboard/" if company_id else None,
+        "auth_url": None,
+    }
+
+
+@app.get("/api/linkedin/auth-url")
+def linkedin_auth_url(_: UserModel = Depends(get_current_user)):
+    """Build the LinkedIn OAuth consent URL."""
+    params = {
+        "response_type": "code",
+        "client_id": _li_client_id(),
+        "redirect_uri": _li_redirect_uri(),
+        "scope": "r_liteprofile w_member_social w_organization_social",
+        "state": "recruiteai_li_oauth",
+    }
+    url = f"{_LINKEDIN_AUTH_URL}?{urllib.parse.urlencode(params)}"
+    return {"auth_url": url, "redirect_uri": _li_redirect_uri()}
+
+
+@app.get("/api/linkedin/callback")
+def linkedin_callback(code: str = "", error: str = "", state: str = ""):
+    """LinkedIn redirects here after user grants permission. Exchanges code for token."""
+    if error:
+        return {"error": error, "message": "LinkedIn OAuth denied"}
+    if not code:
+        raise HTTPException(400, "No code returned from LinkedIn")
+
+    resp = _requests.post(_LINKEDIN_TOKEN_URL, data={
+        "grant_type":    "authorization_code",
+        "code":          code,
+        "redirect_uri":  _li_redirect_uri(),
+        "client_id":     _li_client_id(),
+        "client_secret": _li_client_secret(),
+    }, timeout=15)
+
+    if resp.status_code != 200:
+        raise HTTPException(400, f"LinkedIn token exchange failed: {resp.text}")
+
+    data = resp.json()
+    access_token = data.get("access_token", "")
+    expires_in   = data.get("expires_in", 5183999)  # ~60 days
+
+    # Fetch person URN (needed for posting)
+    me_resp = _requests.get(f"{_LINKEDIN_API_BASE}/me", headers={
+        "Authorization": f"Bearer {access_token}",
+        "X-Restli-Protocol-Version": "2.0.0",
+    }, timeout=10)
+    person_urn = ""
+    if me_resp.status_code == 200:
+        pid = me_resp.json().get("id", "")
+        person_urn = f"urn:li:person:{pid}"
+
+    _linkedin_tokens["access_token"] = access_token
+    _linkedin_tokens["expires_at"]   = datetime.now(timezone.utc).timestamp() + expires_in
+    _linkedin_tokens["person_urn"]   = person_urn
+
+    logging.info(f"[LINKEDIN] OAuth complete — person_urn={person_urn}")
+
+    # Redirect back to the app's social hub
+    domain = os.getenv("REPLIT_DEV_DOMAIN") or os.getenv("REPLIT_DOMAINS", "localhost:5000").split(",")[0]
+    return {"success": True, "person_urn": person_urn, "message": "LinkedIn connected! You can close this tab."}
+
+
+@app.post("/api/linkedin/disconnect")
+def linkedin_disconnect(_: UserModel = Depends(get_current_user)):
+    _linkedin_tokens.clear()
+    return {"success": True}
+
+
+@app.post("/api/social/posts/{post_id}/publish-linkedin")
+def publish_post_to_linkedin(
+    post_id: str,
+    db: Session = Depends(get_db),
+    current_user: UserModel = Depends(get_current_user),
+):
+    """Publish a social post directly to LinkedIn (company page or personal profile)."""
+    post = db.query(SocialPostModel).filter(SocialPostModel.id == post_id).first()
+    if not post:
+        raise HTTPException(404, "Post not found")
+    if post.platform != "linkedin":
+        raise HTTPException(400, "This post is not for LinkedIn")
+    if not _li_token_valid():
+        raise HTTPException(401, "LinkedIn not connected. Please connect via /api/linkedin/auth-url")
+
+    access_token = _linkedin_tokens["access_token"]
+    company_id   = os.getenv("LINKEDIN_COMPANY_ID", "")
+    person_urn   = _linkedin_tokens.get("person_urn", "")
+
+    # Prefer company page; fall back to personal profile
+    if company_id:
+        author_urn = f"urn:li:organization:{company_id}"
+    elif person_urn:
+        author_urn = person_urn
+    else:
+        raise HTTPException(400, "No LinkedIn author URN available")
+
+    full_text = post.content
+    if post.hashtags:
+        full_text += "\n\n" + " ".join(post.hashtags)
+
+    payload = {
+        "author":     author_urn,
+        "lifecycleState": "PUBLISHED",
+        "specificContent": {
+            "com.linkedin.ugc.ShareContent": {
+                "shareCommentary": {"text": full_text},
+                "shareMediaCategory": "NONE",
+            }
+        },
+        "visibility": {"com.linkedin.ugc.MemberNetworkVisibility": "PUBLIC"},
+    }
+
+    resp = _requests.post(
+        f"{_LINKEDIN_API_BASE}/ugcPosts",
+        json=payload,
+        headers={
+            "Authorization": f"Bearer {access_token}",
+            "Content-Type": "application/json",
+            "X-Restli-Protocol-Version": "2.0.0",
+        },
+        timeout=15,
+    )
+
+    if resp.status_code not in (200, 201):
+        logging.error(f"[LINKEDIN] Post failed: {resp.status_code} {resp.text}")
+        raise HTTPException(resp.status_code, f"LinkedIn API error: {resp.text[:200]}")
+
+    li_post_id = resp.headers.get("x-restli-id") or resp.json().get("id", "")
+    li_url     = f"https://www.linkedin.com/feed/update/{li_post_id}/" if li_post_id else ""
+
+    # Mark post as published in DB
+    post.status = "published"
+    db.commit()
+
+    logging.info(f"[LINKEDIN] Published post {post_id} → {li_url}")
+    return {
+        "success": True,
+        "linkedin_post_id": li_post_id,
+        "linkedin_url": li_url,
+        "author_urn": author_urn,
+    }
 
 
 if __name__ == "__main__":

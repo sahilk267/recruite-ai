@@ -1,17 +1,17 @@
 import { useState, useEffect, useCallback } from 'react';
 import {
   Share2, Plus, Trash2, Copy, RefreshCw, Sparkles,
-  CheckCircle2, Clock, Edit2, Hash, Globe, Linkedin,
-  Twitter, Facebook, Instagram
+  CheckCircle2, Clock, Edit2, Globe, Linkedin,
+  Twitter, Facebook, Instagram, ExternalLink, Link2, LinkIcon, AlertCircle, Send
 } from 'lucide-react';
-import { Card, CardContent, CardHeader, CardTitle } from '@/components/ui/card';
+import { Card, CardContent } from '@/components/ui/card';
 import { Button } from '@/components/ui/button';
-import { Input } from '@/components/ui/input';
 import { Badge } from '@/components/ui/badge';
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from '@/components/ui/select';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { Label } from '@/components/ui/label';
 import { Textarea } from '@/components/ui/textarea';
+import { Input } from '@/components/ui/input';
 import apiClient from '@/services/api';
 import { toast } from 'sonner';
 
@@ -25,6 +25,13 @@ interface SocialPost {
   related_job_id: string | null;
   scheduled_at: string | null;
   created_at: string;
+}
+
+interface LinkedInStatus {
+  connected: boolean;
+  person_urn: string | null;
+  company_id: string | null;
+  company_page: string | null;
 }
 
 const PLATFORMS = [
@@ -55,9 +62,12 @@ export function SocialHub() {
   const [statusFilter, setStatusFilter] = useState('all');
   const [showGenerate, setShowGenerate] = useState(false);
   const [generating, setGenerating] = useState(false);
+  const [publishing, setPublishing] = useState<string | null>(null);
   const [form, setForm] = useState({ platform: 'linkedin', tone: 'professional', topic: '', hashtag_count: 5 });
   const [editPost, setEditPost] = useState<SocialPost | null>(null);
   const [editContent, setEditContent] = useState('');
+  const [liStatus, setLiStatus] = useState<LinkedInStatus | null>(null);
+  const [liConnecting, setLiConnecting] = useState(false);
 
   const fetchPosts = useCallback(async () => {
     setLoading(true);
@@ -74,14 +84,71 @@ export function SocialHub() {
     }
   }, [platformFilter, statusFilter]);
 
-  useEffect(() => { fetchPosts(); }, [fetchPosts]);
+  const fetchLinkedInStatus = useCallback(async () => {
+    try {
+      const res = await apiClient.get('/api/linkedin/status');
+      setLiStatus(res.data);
+    } catch {
+      // LinkedIn not configured — silent
+    }
+  }, []);
+
+  useEffect(() => {
+    fetchPosts();
+    fetchLinkedInStatus();
+  }, [fetchPosts, fetchLinkedInStatus]);
+
+  // Poll for LinkedIn connection after OAuth window opens
+  useEffect(() => {
+    if (!liConnecting) return;
+    const interval = setInterval(async () => {
+      try {
+        const res = await apiClient.get('/api/linkedin/status');
+        if (res.data.connected) {
+          setLiStatus(res.data);
+          setLiConnecting(false);
+          toast.success('LinkedIn connected successfully!');
+          clearInterval(interval);
+        }
+      } catch { /* ignore */ }
+    }, 3000);
+    return () => clearInterval(interval);
+  }, [liConnecting]);
+
+  const handleConnectLinkedIn = async () => {
+    try {
+      const res = await apiClient.get('/api/linkedin/auth-url');
+      const authUrl = res.data.auth_url;
+      // Open OAuth in a popup
+      const popup = window.open(authUrl, 'linkedin_oauth',
+        'width=600,height=700,scrollbars=yes,resizable=yes');
+      if (!popup) {
+        // Fallback: open in new tab
+        window.open(authUrl, '_blank');
+      }
+      setLiConnecting(true);
+      toast.info('Complete LinkedIn authorization in the popup window...');
+    } catch {
+      toast.error('Failed to start LinkedIn OAuth');
+    }
+  };
+
+  const handleDisconnectLinkedIn = async () => {
+    try {
+      await apiClient.post('/api/linkedin/disconnect');
+      setLiStatus(s => s ? { ...s, connected: false, person_urn: null } : null);
+      toast.success('LinkedIn disconnected');
+    } catch {
+      toast.error('Failed to disconnect');
+    }
+  };
 
   const handleGenerate = async () => {
     if (!form.topic.trim()) { toast.error('Enter a topic for the post'); return; }
     setGenerating(true);
     try {
       const res = await apiClient.post('/api/social/generate', form);
-      toast.success(`Post generated ${res.data.ai_powered ? '(AI)' : '(template)'}! Saved as draft.`);
+      toast.success(`Post generated ${res.data.ai_powered ? '(AI-powered)' : '(template)'}! Saved as draft.`);
       setShowGenerate(false);
       setForm({ platform: 'linkedin', tone: 'professional', topic: '', hashtag_count: 5 });
       fetchPosts();
@@ -103,7 +170,28 @@ export function SocialHub() {
     }
   };
 
-  const handlePublish = async (id: string) => {
+  const handlePublishLinkedIn = async (post: SocialPost) => {
+    if (!liStatus?.connected) {
+      toast.error('Connect LinkedIn first');
+      return;
+    }
+    setPublishing(post.id);
+    try {
+      const res = await apiClient.post(`/api/social/posts/${post.id}/publish-linkedin`);
+      toast.success('Published to LinkedIn!');
+      if (res.data.linkedin_url) {
+        window.open(res.data.linkedin_url, '_blank');
+      }
+      fetchPosts();
+    } catch (err: any) {
+      const msg = err?.response?.data?.detail ?? 'LinkedIn publish failed';
+      toast.error(msg);
+    } finally {
+      setPublishing(null);
+    }
+  };
+
+  const handleMarkPublished = async (id: string) => {
     try {
       await apiClient.patch(`/api/social/posts/${id}`, { status: 'published' });
       toast.success('Marked as published!');
@@ -140,7 +228,7 @@ export function SocialHub() {
       <div className="flex items-center justify-between">
         <div>
           <h2 className="text-2xl font-bold text-white">Social Media Hub</h2>
-          <p className="text-zinc-400 text-sm mt-1">AI-generated posts for LinkedIn, Twitter, Facebook & Instagram</p>
+          <p className="text-zinc-400 text-sm mt-1">AI-generated posts · LinkedIn, Twitter, Facebook & Instagram</p>
         </div>
         <div className="flex gap-2">
           <Button variant="outline" size="sm" className="border-white/10 text-zinc-400" onClick={fetchPosts}>
@@ -149,6 +237,55 @@ export function SocialHub() {
           <Button size="sm" className="bg-violet-600 hover:bg-violet-700" onClick={() => setShowGenerate(true)}>
             <Sparkles className="w-4 h-4 mr-2" />Generate Post
           </Button>
+        </div>
+      </div>
+
+      {/* LinkedIn Connection Banner */}
+      <div className={`rounded-xl border p-4 flex items-center justify-between gap-4 ${
+        liStatus?.connected
+          ? 'border-blue-500/30 bg-blue-500/5'
+          : 'border-amber-500/20 bg-amber-500/5'
+      }`}>
+        <div className="flex items-center gap-3">
+          <div className={`w-9 h-9 rounded-lg flex items-center justify-center ${
+            liStatus?.connected ? 'bg-blue-600' : 'bg-zinc-700'
+          }`}>
+            <Linkedin className="w-5 h-5 text-white" />
+          </div>
+          <div>
+            <p className="text-white text-sm font-medium">
+              {liStatus?.connected ? 'LinkedIn Connected' : 'LinkedIn Not Connected'}
+            </p>
+            <p className="text-zinc-400 text-xs">
+              {liStatus?.connected
+                ? `Company page ready · ${liStatus.company_id ? `ID ${liStatus.company_id}` : 'Personal profile'}`
+                : 'Connect to publish posts directly to your LinkedIn company page'}
+            </p>
+          </div>
+        </div>
+        <div className="flex items-center gap-2 shrink-0">
+          {liStatus?.connected ? (
+            <>
+              {liStatus.company_page && (
+                <a href={liStatus.company_page} target="_blank" rel="noreferrer">
+                  <Button variant="outline" size="sm" className="border-blue-500/30 text-blue-400 hover:bg-blue-500/10 text-xs">
+                    <ExternalLink className="w-3.5 h-3.5 mr-1.5" />View Page
+                  </Button>
+                </a>
+              )}
+              <Button variant="outline" size="sm" className="border-white/10 text-zinc-400 text-xs"
+                onClick={handleDisconnectLinkedIn}>
+                Disconnect
+              </Button>
+            </>
+          ) : (
+            <Button size="sm" className="bg-blue-600 hover:bg-blue-700 text-xs"
+              onClick={handleConnectLinkedIn} disabled={liConnecting}>
+              {liConnecting
+                ? <><RefreshCw className="w-3.5 h-3.5 mr-1.5 animate-spin" />Waiting...</>
+                : <><Link2 className="w-3.5 h-3.5 mr-1.5" />Connect LinkedIn</>}
+            </Button>
+          )}
         </div>
       </div>
 
@@ -168,22 +305,22 @@ export function SocialHub() {
         })}
       </div>
 
-      {/* Status bar */}
+      {/* Status filter */}
       <div className="flex items-center gap-3">
-        {Object.entries(counts).map(([status, count]) => (
-          <button key={status} onClick={() => setStatusFilter(statusFilter === status ? 'all' : status)}
-            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border transition-all ${statusFilter === status
+        {Object.entries(counts).map(([s, count]) => (
+          <button key={s} onClick={() => setStatusFilter(statusFilter === s ? 'all' : s)}
+            className={`flex items-center gap-2 px-3 py-1.5 rounded-full text-xs border transition-all ${statusFilter === s
               ? 'border-violet-500 bg-violet-500/10 text-violet-300'
               : 'border-white/10 text-zinc-400 hover:border-white/20'}`}>
-            {status === 'published' && <CheckCircle2 className="w-3 h-3" />}
-            {status === 'scheduled' && <Clock className="w-3 h-3" />}
-            {status === 'draft' && <Edit2 className="w-3 h-3" />}
-            {count} {status}
+            {s === 'published' && <CheckCircle2 className="w-3 h-3" />}
+            {s === 'scheduled' && <Clock className="w-3 h-3" />}
+            {s === 'draft' && <Edit2 className="w-3 h-3" />}
+            {count} {s}
           </button>
         ))}
       </div>
 
-      {/* Posts */}
+      {/* Posts grid */}
       {loading ? (
         <div className="flex justify-center py-16">
           <div className="animate-spin w-8 h-8 border-4 border-violet-500 border-t-transparent rounded-full" />
@@ -198,6 +335,7 @@ export function SocialHub() {
           {posts.map(post => {
             const plat = PLATFORMS.find(p => p.id === post.platform);
             const statusCfg = STATUS_CONFIG[post.status] ?? STATUS_CONFIG.draft;
+            const isPublishing = publishing === post.id;
             return (
               <Card key={post.id} className="bg-[#111] border-white/6 hover:border-white/10 transition-all">
                 <CardContent className="p-4">
@@ -209,15 +347,15 @@ export function SocialHub() {
                     </div>
                     <div className="flex items-center gap-1">
                       <button onClick={() => handleCopy(post.content, post.hashtags)}
-                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors">
+                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors" title="Copy">
                         <Copy className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => { setEditPost(post); setEditContent(post.content); }}
-                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors">
+                        className="p-1.5 text-zinc-400 hover:text-white hover:bg-white/5 rounded transition-colors" title="Edit">
                         <Edit2 className="w-3.5 h-3.5" />
                       </button>
                       <button onClick={() => handleDelete(post.id)}
-                        className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors">
+                        className="p-1.5 text-zinc-400 hover:text-red-400 hover:bg-red-500/10 rounded transition-colors" title="Delete">
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
                     </div>
@@ -236,10 +374,27 @@ export function SocialHub() {
                   <div className="flex items-center justify-between pt-2 border-t border-white/6">
                     <span className="text-zinc-500 text-xs">{post.tone} · {new Date(post.created_at).toLocaleDateString()}</span>
                     {post.status === 'draft' && (
-                      <Button size="sm" className="h-6 text-xs bg-emerald-600 hover:bg-emerald-700 px-2"
-                        onClick={() => handlePublish(post.id)}>
-                        <CheckCircle2 className="w-3 h-3 mr-1" />Mark Published
-                      </Button>
+                      <div className="flex items-center gap-2">
+                        {/* LinkedIn direct publish */}
+                        {post.platform === 'linkedin' && (
+                          <Button size="sm"
+                            className={`h-6 text-xs px-2 ${liStatus?.connected ? 'bg-blue-600 hover:bg-blue-700' : 'bg-zinc-700 cursor-not-allowed'}`}
+                            onClick={() => handlePublishLinkedIn(post)}
+                            disabled={!liStatus?.connected || isPublishing}
+                            title={liStatus?.connected ? 'Publish to LinkedIn' : 'Connect LinkedIn first'}>
+                            {isPublishing
+                              ? <RefreshCw className="w-3 h-3 animate-spin" />
+                              : <><Linkedin className="w-3 h-3 mr-1" />Publish</>}
+                          </Button>
+                        )}
+                        {/* Manual mark published for non-LinkedIn */}
+                        {post.platform !== 'linkedin' && (
+                          <Button size="sm" className="h-6 text-xs bg-emerald-600 hover:bg-emerald-700 px-2"
+                            onClick={() => handleMarkPublished(post.id)}>
+                            <CheckCircle2 className="w-3 h-3 mr-1" />Mark Published
+                          </Button>
+                        )}
+                      </div>
                     )}
                   </div>
                 </CardContent>
@@ -295,14 +450,18 @@ export function SocialHub() {
                 onChange={e => setForm(f => ({ ...f, hashtag_count: Number(e.target.value) }))}
                 className="mt-1 bg-[#1a1a1a] border-white/10 text-white" />
             </div>
+            {form.platform === 'linkedin' && !liStatus?.connected && (
+              <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-500/10 border border-amber-500/20">
+                <AlertCircle className="w-4 h-4 text-amber-400 shrink-0 mt-0.5" />
+                <p className="text-amber-300 text-xs">LinkedIn is not connected. Post will be saved as a draft — connect LinkedIn to publish directly.</p>
+              </div>
+            )}
             <div className="flex justify-end gap-2 pt-2">
               <Button variant="outline" className="border-white/10" onClick={() => setShowGenerate(false)}>Cancel</Button>
               <Button className="bg-violet-600 hover:bg-violet-700" onClick={handleGenerate} disabled={generating}>
-                {generating ? (
-                  <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Generating...</>
-                ) : (
-                  <><Sparkles className="w-4 h-4 mr-2" />Generate</>
-                )}
+                {generating
+                  ? <><RefreshCw className="w-4 h-4 mr-2 animate-spin" />Generating...</>
+                  : <><Sparkles className="w-4 h-4 mr-2" />Generate</>}
               </Button>
             </div>
           </div>
